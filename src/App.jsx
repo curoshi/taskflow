@@ -232,6 +232,8 @@ export default function App(){
   const[justAppeared,   setJustAppeared]  =useState(null);
   const[streak,         setStreak]        =useState(0);
   const[streakLastDate, setStreakLastDate]=useState(null);
+  const[streakPrev,     setStreakPrev]    =useState(0);    // streak count before today's increment
+  const[streakPrevDate, setStreakPrevDate]=useState(null); // streakLastDate before today's increment
   const[loaded,         setLoaded]        =useState(false);
   const[expandedNote,   setExpandedNote]  =useState(null);
   const[quickAdd,       setQuickAdd]      =useState("");
@@ -263,7 +265,7 @@ export default function App(){
       if(t)   setTasks(JSON.parse(t));
       if(c)   setCategories(JSON.parse(c));
       if(s)   setSettings(p=>({...p,...JSON.parse(s)}));
-      if(st)  { const{count,lastDate}=JSON.parse(st); setStreak(count||0); setStreakLastDate(lastDate||null); }
+      if(st)  { const{count,lastDate,prev,prevDate}=JSON.parse(st); setStreak(count||0); setStreakLastDate(lastDate||null); setStreakPrev(prev||0); setStreakPrevDate(prevDate||null); }
       if(tmpl) setTemplates(JSON.parse(tmpl));
       const fl=lsGet('tf_focuslog'); if(fl) setFocusLog(JSON.parse(fl));
       if(!ob)  setShowOnboarding(true);
@@ -275,7 +277,7 @@ export default function App(){
   useEffect(()=>{ if(!loaded)return; lsSet('tf_tasks',tasks); },[tasks,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_categories',categories); },[categories,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_settings',settings); },[settings,loaded]);
-  useEffect(()=>{ if(!loaded)return; lsSet('tf_streak',{count:streak,lastDate:streakLastDate}); },[streak,streakLastDate,loaded]);
+  useEffect(()=>{ if(!loaded)return; lsSet('tf_streak',{count:streak,lastDate:streakLastDate,prev:streakPrev,prevDate:streakPrevDate}); },[streak,streakLastDate,streakPrev,streakPrevDate,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_templates',templates); },[templates,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_focuslog',focusLog); },[focusLog,loaded]);
 
@@ -353,11 +355,32 @@ export default function App(){
   useEffect(()=>{
     if(!loaded) return;
     const today=todayStr();
-    if(todayAll.length>0&&todayAll.every(t=>t.done)){
-      if(streakLastDate===today) return;
-      const yest=new Date(); yest.setDate(yest.getDate()-1);
-      setStreak(streakLastDate===yest.toDateString()?streak+1:1);
+    const yest=new Date(); yest.setDate(yest.getDate()-1);
+    const yesterdayStr2=yest.toDateString();
+    const allDoneToday=todayAll.length>0&&todayAll.every(t=>t.done);
+
+    if(allDoneToday){
+      if(streakLastDate===today) return; // already counted today
+      const isConsecutive=streakLastDate===yesterdayStr2;
+      const newStreak=isConsecutive?streak+1:1;
+      // Store exact previous state so rollback is perfect
+      setStreakPrev(streak);
+      setStreakPrevDate(streakLastDate);
+      setStreak(newStreak);
       setStreakLastDate(today);
+    } else {
+      // Unchecked after all-done today — roll back to exact previous state
+      if(streakLastDate===today){
+        setStreak(streakPrev);
+        setStreakLastDate(streakPrevDate);
+      }
+      // Missed a day — reset
+      else if(streakLastDate&&streakLastDate!==today&&streakLastDate!==yesterdayStr2){
+        setStreak(0);
+        setStreakPrev(0);
+        setStreakPrevDate(null);
+        setStreakLastDate(null);
+      }
     }
   },[tasks,loaded]);
 
@@ -769,7 +792,7 @@ export default function App(){
       {/* ══ SETTINGS ══ */}
       {tab==="settings"&&(
         <PageTransition>
-          <SettingsPage settings={settings} setSettings={setSettings} analytics={analytics} categories={categories} tasks={tasks} accent={accent} th={th} streak={streak} templates={templates} focusLog={focusLog} notifGranted={notifGranted} onEnableNotifications={enableNotifications} onResetStreak={()=>{setStreak(0);setStreakLastDate(null);}} onDeleteTemplate={deleteTemplate} onAddFromTemplate={addFromTemplate}/>
+          <SettingsPage settings={settings} setSettings={setSettings} analytics={analytics} categories={categories} tasks={tasks} accent={accent} th={th} streak={streak} templates={templates} focusLog={focusLog} notifGranted={notifGranted} onEnableNotifications={enableNotifications} onResetStreak={()=>{setStreak(0);setStreakLastDate(null);setStreakPrev(0);setStreakPrevDate(null);}} onDeleteTemplate={deleteTemplate} onAddFromTemplate={addFromTemplate}/>
         </PageTransition>
       )}
 
