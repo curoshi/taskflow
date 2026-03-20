@@ -295,12 +295,17 @@ export default function App(){
   function triggerRecur(){
     const today=todayStr();
     setTasks(prev=>{
-      let next=prev.filter(t=>{
-        if(!t.recurSourceId) return true;
-        if(t.date===today)   return true;
-        if(!t.done)          return false;
-        return false;
-      });
+      // Solidify recurStreak for completed old clones before removing them
+      const completedOldClones=prev.filter(t=>t.recurSourceId&&t.date!==today&&t.done);
+      const streakUpdates={};
+      completedOldClones.forEach(t=>{ streakUpdates[t.recurSourceId]=(streakUpdates[t.recurSourceId]||0)+1; });
+      let next=prev
+        .map(t=>streakUpdates[t.id]?{...t,recurStreak:(t.recurStreak||0)+streakUpdates[t.id]}:t)
+        .filter(t=>{
+          if(!t.recurSourceId) return true;
+          if(t.date===today)   return true;
+          return false;
+        });
       const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
       const toAdd=[];
       next.forEach(t=>{
@@ -319,12 +324,25 @@ export default function App(){
     const today=todayStr();
     setTasks(prev=>{
       // Remove stale incomplete recurring clones from previous days
-      let next=prev.filter(t=>{
-        if(!t.recurSourceId) return true;   // always keep source tasks & non-recurring
-        if(t.date===today)   return true;   // always keep today's clone
-        if(!t.done)          return false;  // remove old incomplete clones (they'll regenerate)
-        return false;                       // remove completed old clones too — keep list clean
+      // Before filtering, collect completed old clones to solidify their recurStreak
+      const completedOldClones=prev.filter(t=>
+        t.recurSourceId && t.date!==today && t.done
+      );
+      // Increment recurStreak on source for each completed old clone
+      let streakUpdates={};
+      completedOldClones.forEach(t=>{
+        streakUpdates[t.recurSourceId]=(streakUpdates[t.recurSourceId]||0)+1;
       });
+      let next=prev
+        .map(t=> streakUpdates[t.id]
+          ? {...t,recurStreak:(t.recurStreak||0)+streakUpdates[t.id]}
+          : t
+        )
+        .filter(t=>{
+          if(!t.recurSourceId) return true;   // keep source tasks & non-recurring
+          if(t.date===today)   return true;   // keep today's clone
+          return false;                       // remove all old clones (done or not)
+        });
       // Generate today's clone if one doesn't exist yet
       const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
       const toAdd=[];
@@ -459,20 +477,7 @@ export default function App(){
       haptic("success");
       setJustDone(id);
       setTimeout(()=>{
-        setTasks(prev=>{
-          let next=prev.map(x=>x.id===id?{...x,done:true}:x);
-          if(t.recur&&t.recur!=="none"){
-            // Increment recurStreak on the source task
-            const srcId=t.recurSourceId||t.id;
-            next=next.map(x=>x.id===srcId?{...x,recurStreak:(x.recurStreak||0)+1}:x);
-            // Auto-delete this daily copy after a delay so they don't pile up
-            // (source task stays; only the today-clone gets removed)
-            if(t.recurSourceId){
-              setTimeout(()=>setTasks(p=>p.filter(x=>x.id!==id)),800);
-            }
-          }
-          return next;
-        });
+        setTasks(prev=>prev.map(x=>x.id===id?{...x,done:true}:x));
         setJustDone(null);
       },360);
     } else {
