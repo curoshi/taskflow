@@ -279,6 +279,38 @@ export default function App(){
   useEffect(()=>{ if(!loaded)return; lsSet('tf_templates',templates); },[templates,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_focuslog',focusLog); },[focusLog,loaded]);
 
+  // ── Midnight date-change detector ──────────────────────────────────────────
+  useEffect(()=>{
+    if(!loaded) return;
+    let lastDate=todayStr();
+    const id=setInterval(()=>{
+      const now=todayStr();
+      if(now!==lastDate){ lastDate=now; triggerRecur(); }
+    },30000); // check every 30 seconds
+    return()=>clearInterval(id);
+  },[loaded]);
+
+  function triggerRecur(){
+    const today=todayStr();
+    setTasks(prev=>{
+      let next=prev.filter(t=>{
+        if(!t.recurSourceId) return true;
+        if(t.date===today)   return true;
+        if(!t.done)          return false;
+        return false;
+      });
+      const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
+      const toAdd=[];
+      next.forEach(t=>{
+        if(!t.recur||t.recur==="none"||t.date===today||existing.has(t.id)) return;
+        if(shouldRecurToday(t,today)){
+          toAdd.push({...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,recurSourceId:t.id,createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))});
+        }
+      });
+      return toAdd.length>0?[...next,...toAdd]:next;
+    });
+  }
+
   // ── Recur ────────────────────────────────────────────────────────────────────
   useEffect(()=>{
     if(!loaded) return;
