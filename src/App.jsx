@@ -181,15 +181,15 @@ function scheduleNotification(title,body,delayMs){
 const now=Date.now();
 const INITIAL_TASKS=[
   {id:1, title:"Review notes",      category:"learning",priority:"medium",minutes:30, workTime:"15:00",dueTime:"16:00",notes:"Chapter 4 & 5",            done:false,date:daysFromNow(0),createdAt:now-6e5, recur:"none",   subtasks:[],manualOrder:0,actualMinutes:0},
-  {id:2, title:"Morning run",        category:"health",  priority:"high",  minutes:45, workTime:"07:00",dueTime:"",     notes:"",                          done:true, date:daysFromNow(0),createdAt:now-7e5, recur:"daily",  subtasks:[],manualOrder:1,actualMinutes:42},
-  {id:3, title:"Read emails",        category:"work",    priority:"low",   minutes:15, workTime:"09:00",dueTime:"10:00",notes:"Reply to pending ones",     done:false,date:daysFromNow(0),createdAt:now-8e5, recur:"weekdays",subtasks:[{id:"s1",text:"Inbox zero",done:false},{id:"s2",text:"Reply to Alex",done:true}],manualOrder:2,actualMinutes:0},
+  {id:2, title:"Morning run",        category:"health",  priority:"high",  minutes:45, workTime:"07:00",dueTime:"",     notes:"",                          done:true, date:daysFromNow(0),createdAt:now-7e5, recur:"daily",  subtasks:[],manualOrder:1,actualMinutes:42,recurStreak:3},
+  {id:3, title:"Read emails",        category:"work",    priority:"low",   minutes:15, workTime:"09:00",dueTime:"10:00",notes:"Reply to pending ones",     done:false,date:daysFromNow(0),createdAt:now-8e5, recur:"weekdays",recurStreak:2,subtasks:[{id:"s1",text:"Inbox zero",done:false},{id:"s2",text:"Reply to Alex",done:true}],manualOrder:2,actualMinutes:0},
   {id:4, title:"Study chapter 6",    category:"learning",priority:"high",  minutes:60, workTime:"16:00",dueTime:"18:00",notes:"Focus on practice problems",done:false,date:daysFromNow(1),createdAt:now-9e5, recur:"none",   subtasks:[],manualOrder:3,actualMinutes:0},
   {id:5, title:"Grocery run",        category:"personal",priority:"medium",minutes:30, workTime:"11:00",dueTime:"",     notes:"",                          done:false,date:daysFromNow(1),createdAt:now-1e6, recur:"none",   subtasks:[{id:"s3",text:"Milk & eggs",done:false},{id:"s4",text:"Veggies",done:false}],manualOrder:4,actualMinutes:0},
   {id:6, title:"Doctor appointment", category:"health",  priority:"high",  minutes:45, workTime:"14:00",dueTime:"14:00",notes:"Bring insurance card",      done:false,date:daysFromNow(3),createdAt:now-1.1e6,recur:"none",   subtasks:[],manualOrder:5,actualMinutes:0},
   {id:7, title:"Project proposal",   category:"work",    priority:"high",  minutes:90, workTime:"17:00",dueTime:"19:00",notes:"Draft & send to team",      done:false,date:daysFromNow(5),createdAt:now-1.2e6,recur:"none",   subtasks:[],manualOrder:6,actualMinutes:0},
-  {id:8, title:"Meditate",           category:"health",  priority:"low",   minutes:10, workTime:"07:00",dueTime:"",     notes:"",                          done:true, date:daysFromNow(0),createdAt:now-1.3e6,recur:"daily",  subtasks:[],manualOrder:7,actualMinutes:10},
-  {id:9, title:"Call mom",           category:"personal",priority:"medium",minutes:20, workTime:"18:00",dueTime:"20:00",notes:"",                          done:false,date:daysFromNow(0),createdAt:now-1.4e6,recur:"weekly", subtasks:[],manualOrder:8,actualMinutes:0},
-  {id:10,title:"Prep lunch",         category:"personal",priority:"low",   minutes:15, workTime:"12:00",dueTime:"",     notes:"",                          done:false,date:daysFromNow(1),createdAt:now-1.5e6,recur:"daily",  subtasks:[],manualOrder:9,actualMinutes:0},
+  {id:8, title:"Meditate",           category:"health",  priority:"low",   minutes:10, workTime:"07:00",dueTime:"",     notes:"",                          done:true, date:daysFromNow(0),createdAt:now-1.3e6,recur:"daily",  subtasks:[],manualOrder:7,actualMinutes:10,recurStreak:5},
+  {id:9, title:"Call mom",           category:"personal",priority:"medium",minutes:20, workTime:"18:00",dueTime:"20:00",notes:"",                          done:false,date:daysFromNow(0),createdAt:now-1.4e6,recur:"weekly", recurStreak:1,subtasks:[],manualOrder:8,actualMinutes:0},
+  {id:10,title:"Prep lunch",         category:"personal",priority:"low",   minutes:15, workTime:"12:00",dueTime:"",     notes:"",                          done:false,date:daysFromNow(1),createdAt:now-1.5e6,recur:"daily",  recurStreak:0,subtasks:[],manualOrder:9,actualMinutes:0},
 ];
 const INITIAL_TEMPLATES=[
   {id:"t1",name:"Study Session",  icon:"📚",task:{category:"learning",priority:"high",  minutes:60,workTime:"",dueTime:"",notes:"",recur:"none",subtasks:[]}},
@@ -284,13 +284,28 @@ export default function App(){
     if(!loaded) return;
     const today=todayStr();
     setTasks(prev=>{
-      const existing=new Set(prev.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
-      const toAdd=[];
-      prev.forEach(t=>{
-        if(!t.recur||t.recur==="none"||t.date===today||existing.has(t.id)) return;
-        if(shouldRecurToday(t,today)) toAdd.push({...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,recurSourceId:t.id,createdAt:Date.now()});
+      // Remove stale incomplete recurring clones from previous days
+      let next=prev.filter(t=>{
+        if(!t.recurSourceId) return true;   // always keep source tasks & non-recurring
+        if(t.date===today)   return true;   // always keep today's clone
+        if(!t.done)          return false;  // remove old incomplete clones (they'll regenerate)
+        return false;                       // remove completed old clones too — keep list clean
       });
-      return toAdd.length>0?[...prev,...toAdd]:prev;
+      // Generate today's clone if one doesn't exist yet
+      const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
+      const toAdd=[];
+      next.forEach(t=>{
+        if(!t.recur||t.recur==="none"||t.date===today||existing.has(t.id)) return;
+        if(shouldRecurToday(t,today)){
+          toAdd.push({...t,
+            id:Date.now()+Math.random(),
+            date:today,done:false,actualMinutes:0,
+            recurSourceId:t.id,createdAt:Date.now(),
+            subtasks:(t.subtasks||[]).map(s=>({...s,done:false})),
+          });
+        }
+      });
+      return toAdd.length>0?[...next,...toAdd]:next;
     });
   },[loaded]);
 
@@ -385,8 +400,30 @@ export default function App(){
   // ── Actions ──────────────────────────────────────────────────────────────────
   function toggleDone(id){
     const t=tasks.find(t=>t.id===id); if(!t) return;
-    if(!t.done){ haptic("success"); setJustDone(id); setTimeout(()=>{ setTasks(prev=>prev.map(x=>x.id===id?{...x,done:true}:x)); setJustDone(null); },360); }
-    else { haptic("light"); setTasks(prev=>prev.map(x=>x.id===id?{...x,done:false}:x)); }
+    if(!t.done){
+      haptic("success");
+      setJustDone(id);
+      setTimeout(()=>{
+        setTasks(prev=>{
+          let next=prev.map(x=>x.id===id?{...x,done:true}:x);
+          if(t.recur&&t.recur!=="none"){
+            // Increment recurStreak on the source task
+            const srcId=t.recurSourceId||t.id;
+            next=next.map(x=>x.id===srcId?{...x,recurStreak:(x.recurStreak||0)+1}:x);
+            // Auto-delete this daily copy after a delay so they don't pile up
+            // (source task stays; only the today-clone gets removed)
+            if(t.recurSourceId){
+              setTimeout(()=>setTasks(p=>p.filter(x=>x.id!==id)),800);
+            }
+          }
+          return next;
+        });
+        setJustDone(null);
+      },360);
+    } else {
+      haptic("light");
+      setTasks(prev=>prev.map(x=>x.id===id?{...x,done:false}:x));
+    }
   }
   function toggleSubtask(taskId,subId){
     haptic("light");
@@ -1045,7 +1082,15 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAp
           <div style={{flex:1,minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:5}}>
               <div style={{fontSize:compact?13:14,fontWeight:500,textDecoration:task.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:task.done?th.textMuted:th.text,flex:1}}>{task.title}</div>
-              {task.recur&&task.recur!=="none"&&<span style={{fontSize:9,color:th.textDim,background:th.surface2,borderRadius:3,padding:"1px 4px",flexShrink:0}}>↻</span>}
+              {task.recur&&task.recur!=="none"&&(()=>{
+                const srcTask=task;
+                const streak=(srcTask.recurStreak||0);
+                return(
+                  <span style={{fontSize:9,color:streak>=10?"#F2CC8F":streak>=5?accent:th.textMuted,background:streak>=5?accent+"18":th.surface2,borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:streak>=5?700:400,display:"flex",alignItems:"center",gap:2}}>
+                    ↻{streak>0?` ${streak}x`:""}
+                  </span>
+                );
+              })()}
               {overdue&&<span style={{fontSize:9,color:"#E07A5F",background:"#E07A5F22",borderRadius:3,padding:"1px 4px",flexShrink:0,fontWeight:700}}>OVERDUE</span>}
               {(()=>{ const d=taskAgeDays(task); const c=ageColor(d); return c&&!task.done?<span title={`${d} days old`} style={{fontSize:9,color:c,background:c+"22",borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:600}}>{d}d</span>:null; })()}
             </div>
@@ -1587,8 +1632,10 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
           {/* Duration — max 4h, label switches to hours above 60m */}
           <FF label={`Focus Duration: ${durLabel}`} th={th}>
             <input type="range" min={5} max={240} step={5} value={form.minutes} onChange={e=>setForm(f=>({...f,minutes:Number(e.target.value)}))} style={{width:"100%",accentColor:accent,height:4}}/>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:th.textDim,marginTop:5}}>
-              <span>5m</span><span>30m</span><span>1h</span><span>2h</span><span>3h</span><span>4h</span>
+            <div style={{display:"flex",marginTop:6}}>
+              {["5m","1h","2h","3h","4h"].map((l,i,a)=>(
+                <div key={l} style={{flex:i===0?"1.04":"1",textAlign:i===0?"left":i===a.length-1?"right":"center",fontSize:10,color:th.textDim}}>{l}</div>
+              ))}
             </div>
           </FF>
 
@@ -1607,37 +1654,31 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
             </div>
           </FF>
 
-          {/* Work time + Due time — side by side */}
-          <div style={{display:"flex",gap:12}}>
-            <div style={{flex:1,minWidth:0}}>
-              <FF label="🕐 Work Time" th={th}>
-                <div style={{display:"flex",gap:6,flexDirection:"column"}}>
-                  <div style={{position:"relative"}}>
-                    <input type="time" value={form.workTime||""} onChange={e=>setForm(f=>({...f,workTime:e.target.value}))}
-                      style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"11px 32px 11px 10px",color:"#7B9EC9",fontSize:13,colorScheme:cs,minWidth:0}}/>
-                    {form.workTime&&<button onClick={()=>setForm(f=>({...f,workTime:""}))} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:13,cursor:"pointer",padding:"2px",lineHeight:1}}>✕</button>}
-                  </div>
-                  {workTimePast&&(
-                    <button onClick={()=>setForm(f=>({...f,workTime:nowTimeStr()}))}
-                      style={{background:"#7B9EC922",border:"1px solid #7B9EC944",borderRadius:8,padding:"7px 10px",color:"#7B9EC9",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,textAlign:"center"}}>
-                      ⚠️ Update to Now
-                    </button>
-                  )}
-                </div>
-                <div style={{fontSize:10,color:th.textDim,marginTop:4}}>Start time</div>
-              </FF>
+          {/* Work time — full width stacked */}
+          <FF label="🕐 Work Time" th={th}>
+            <div style={{position:"relative"}}>
+              <input type="time" value={form.workTime||""} onChange={e=>setForm(f=>({...f,workTime:e.target.value}))}
+                style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"12px 42px 12px 14px",color:"#7B9EC9",fontSize:15,colorScheme:cs}}/>
+              {form.workTime&&<button onClick={()=>setForm(f=>({...f,workTime:""}))} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:16,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>}
             </div>
-            <div style={{flex:1,minWidth:0}}>
-              <FF label="⏰ Due Time" th={th}>
-                <div style={{position:"relative"}}>
-                  <input type="time" value={form.dueTime||""} onChange={e=>setForm(f=>({...f,dueTime:e.target.value}))}
-                    style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"11px 32px 11px 10px",color:"#E07A5F88",fontSize:13,colorScheme:cs,minWidth:0}}/>
-                  {form.dueTime&&<button onClick={()=>setForm(f=>({...f,dueTime:""}))} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:13,cursor:"pointer",padding:"2px",lineHeight:1}}>✕</button>}
-                </div>
-                <div style={{fontSize:10,color:th.textDim,marginTop:4}}>Deadline</div>
-              </FF>
+            {workTimePast&&(
+              <button onClick={()=>setForm(f=>({...f,workTime:nowTimeStr()}))}
+                style={{marginTop:8,width:"100%",background:"#7B9EC922",border:"1px solid #7B9EC944",borderRadius:10,padding:"10px",color:"#7B9EC9",fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,textAlign:"center"}}>
+                ⚠️ Time has passed — tap to update to now
+              </button>
+            )}
+            <div style={{fontSize:10,color:th.textDim,marginTop:5}}>When you plan to start</div>
+          </FF>
+
+          {/* Due time — full width stacked */}
+          <FF label="⏰ Due Time" th={th}>
+            <div style={{position:"relative"}}>
+              <input type="time" value={form.dueTime||""} onChange={e=>setForm(f=>({...f,dueTime:e.target.value}))}
+                style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"12px 42px 12px 14px",color:"#E07A5F",fontSize:15,colorScheme:cs}}/>
+              {form.dueTime&&<button onClick={()=>setForm(f=>({...f,dueTime:""}))} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:16,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>}
             </div>
-          </div>
+            <div style={{fontSize:10,color:th.textDim,marginTop:5}}>Hard deadline</div>
+          </FF>
 
           {/* Est finish */}
           <div style={{display:"flex",alignItems:"center",gap:10,background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"13px 16px",marginBottom:20}}>
@@ -1783,98 +1824,134 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
     </div>
   );
 
+  // Ring size based on viewport — scales to fill nicely
+  const ringSize = Math.min(Math.round(Math.min(window.innerWidth,window.innerHeight)*0.52),300);
+  const ringR    = ringSize/2 - 8;
+  const ringCirc = 2*Math.PI*ringR;
+  const ringDash = ringCirc*pct;
+
   return(
-    <PageTransition>
-      <div style={{fontFamily:"'DM Sans',sans-serif",background:focusLock&&running?"#080810":th.bg,minHeight:"100vh",color:th.text,maxWidth:430,margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",transition:"background 0.6s",position:"relative",overflowX:"hidden"}}>
-        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
-        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}@keyframes burstRipple{0%{transform:scale(0);opacity:0.9}100%{transform:scale(5);opacity:0}}@keyframes burstFade{0%{opacity:1}100%{opacity:0}}@keyframes fadeIn{from{opacity:0}to{opacity:1}}`}</style>
+    <div style={{
+      position:"fixed",top:0,left:0,right:0,bottom:0,
+      width:"100vw",height:"100vh",
+      fontFamily:"'DM Sans',sans-serif",
+      background:focusLock&&running?"#080810":th.bg,
+      color:th.text,
+      display:"flex",flexDirection:"column",
+      transition:"background 0.6s",
+      overflow:"hidden",
+      zIndex:1,
+    }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+      <style>{`
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.45}}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+      `}</style>
 
-        {/* burst handled by early return below */}
+      {/* Header */}
+      <div style={{
+        padding:"env(safe-area-inset-top,52px) 22px 0",
+        paddingTop:"max(env(safe-area-inset-top),52px)",
+        display:"flex",alignItems:"center",justifyContent:"space-between",
+        opacity:focusLock&&running?0:1,transition:"opacity 0.4s",
+        pointerEvents:focusLock&&running?"none":"auto",
+        flexShrink:0,
+      }}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:th.textDim,fontSize:15,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",padding:"8px"}}>← Back</button>
+        <button onClick={()=>setFocusLock(p=>!p)}
+          style={{background:focusLock?th.surface:"none",border:`1px solid ${focusLock?cat.color+"44":th.border2}`,borderRadius:20,padding:"8px 16px",color:focusLock?cat.color:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:6,transition:"all 0.2s"}}>
+          {focusLock?"🔒":"🔓"}{focusLock?" Focus On":" Focus Lock"}
+        </button>
+      </div>
 
-        {/* Header */}
-        <div style={{width:"100%",padding:"52px 22px 0",display:"flex",alignItems:"center",justifyContent:"space-between",opacity:focusLock&&running?0:1,transition:"opacity 0.4s",pointerEvents:focusLock&&running?"none":"auto"}}>
-          <button onClick={onBack} style={{background:"none",border:"none",color:th.textDim,fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",padding:"4px"}}>← Back</button>
-          <button onClick={()=>setFocusLock(p=>!p)}
-            style={{background:focusLock?th.surface:"none",border:`1px solid ${focusLock?cat.color+"44":th.border2}`,borderRadius:20,padding:"7px 14px",color:focusLock?cat.color:th.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:6,transition:"all 0.2s"}}>
-            <span>{focusLock?"🔒":"🔓"}</span>{focusLock?"Focus Lock On":"Focus Lock"}
-          </button>
+      {/* Focus lock overlay bar */}
+      {focusLock&&running&&(
+        <div style={{position:"absolute",top:0,left:0,right:0,padding:"max(env(safe-area-inset-top),16px) 22px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:10,animation:"fadeIn 0.3s ease"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:15,color:cat.color}}>🔒</span>
+            <span style={{fontSize:12,color:th.textDim,fontFamily:"'Space Mono',monospace",letterSpacing:1}}>FOCUS MODE</span>
+          </div>
+          <button onClick={()=>setFocusLock(false)} style={{background:"none",border:`1px solid ${th.border2}`,borderRadius:12,padding:"6px 14px",color:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Unlock</button>
         </div>
+      )}
 
-        {/* Focus lock top bar */}
-        {focusLock&&running&&(
-          <div style={{position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,padding:"16px 22px",display:"flex",justifyContent:"space-between",alignItems:"center",zIndex:10,animation:"fadeIn 0.3s ease"}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:14,color:cat.color}}>🔒</span><span style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace",letterSpacing:1}}>FOCUS</span></div>
-            <button onClick={()=>setFocusLock(false)} style={{background:"none",border:`1px solid ${th.border2}`,borderRadius:12,padding:"5px 12px",color:th.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Unlock</button>
+      {/* Main content — fills remaining height */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 24px 24px",gap:0,minHeight:0}}>
+
+        {/* Category + title */}
+        <div style={{opacity:focusLock&&running?0.2:1,transition:"opacity 0.4s",textAlign:"center",marginBottom:focusLock&&running?12:20,flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,justifyContent:"center"}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>
+            <span style={{fontSize:12,color:th.textDim,textTransform:"uppercase",letterSpacing:1.5,fontFamily:"'Space Mono',monospace"}}>{cat.label}</span>
           </div>
-        )}
-
-        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 28px",width:"100%"}}>
-          <div style={{opacity:focusLock&&running?0.2:1,transition:"opacity 0.4s",textAlign:"center",marginBottom:focusLock&&running?16:24}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,justifyContent:"center"}}>
-              <span style={{width:7,height:7,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>
-              <span style={{fontSize:11,color:th.textDim,textTransform:"uppercase",letterSpacing:1.5,fontFamily:"'Space Mono',monospace"}}>{cat.label}</span>
-            </div>
-            <div style={{fontSize:20,fontWeight:600,letterSpacing:-0.3}}>{task.title}</div>
-          </div>
-
+          <div style={{fontSize:"clamp(16px,4.5vw,22px)",fontWeight:600,letterSpacing:-0.3,maxWidth:"80vw",wordBreak:"break-word",lineHeight:1.3}}>{task.title}</div>
           {task.dueTime&&!(focusLock&&running)&&(
-            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:18,background:"#E07A5F18",border:"1px solid #E07A5F33",borderRadius:20,padding:"5px 14px"}}>
+            <div style={{display:"inline-flex",alignItems:"center",gap:5,marginTop:10,background:"#E07A5F18",border:"1px solid #E07A5F33",borderRadius:20,padding:"5px 14px"}}>
               <span style={{fontSize:12}}>⏰</span>
               <span style={{fontSize:12,color:"#E07A5F",fontFamily:"'Space Mono',monospace"}}>Due {fmtTime(task.dueTime)}</span>
             </div>
           )}
+        </div>
 
-          {/* Timer ring */}
-          <div style={{position:"relative",width:220,height:220,marginBottom:14}}>
-            <svg width="220" height="220" style={{transform:"rotate(-90deg)"}}>
-              <circle cx="110" cy="110" r={r} fill="none" stroke={th.surface} strokeWidth="12"/>
-              <circle cx="110" cy="110" r={r} fill="none" stroke={finished?"#81B29A":cat.color} strokeWidth="12" strokeLinecap="round"
-                strokeDasharray={`${circ*pct} ${circ}`}
-                style={{transition:"stroke-dasharray 1s linear,stroke 0.6s ease",filter:`drop-shadow(0 0 ${focusLock&&running?22:14}px ${finished?"#81B29A":cat.color}${focusLock&&running?"99":"66"})`}}/>
-            </svg>
-            <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-              <div style={{fontFamily:"'Space Mono',monospace",fontSize:timerFontSize,fontWeight:700,animation:running?"pulse 2s infinite":"none",letterSpacing:2,transition:"font-size 0.3s",textAlign:"center"}}>{countdownStr}</div>
-              <div style={{fontSize:10,color:th.textDim,marginTop:5,letterSpacing:1}}>{fmtDuration(task.minutes)} session</div>
-            </div>
+        {/* Ring — scales to screen */}
+        <div style={{position:"relative",width:ringSize,height:ringSize,marginBottom:16,flexShrink:0}}>
+          <svg width={ringSize} height={ringSize} style={{transform:"rotate(-90deg)"}}>
+            <circle cx={ringSize/2} cy={ringSize/2} r={ringR} fill="none" stroke={th.surface} strokeWidth="14"/>
+            <circle cx={ringSize/2} cy={ringSize/2} r={ringR} fill="none" stroke={cat.color} strokeWidth="14" strokeLinecap="round"
+              strokeDasharray={`${ringDash} ${ringCirc}`}
+              style={{transition:"stroke-dasharray 1s linear",filter:`drop-shadow(0 0 ${focusLock&&running?24:16}px ${cat.color}${focusLock&&running?"99":"66"})`}}/>
+          </svg>
+          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+            <div style={{
+              fontFamily:"'Space Mono',monospace",
+              fontSize:countdownMode==="hh:mm:ss"?"clamp(22px,7vw,36px)":"clamp(36px,12vw,60px)",
+              fontWeight:700,
+              animation:running?"pulse 2s infinite":"none",
+              letterSpacing:2,
+              textAlign:"center",
+              lineHeight:1,
+            }}>{countdownStr}</div>
+            <div style={{fontSize:"clamp(9px,2.5vw,12px)",color:th.textDim,marginTop:8,letterSpacing:1}}>{fmtDuration(task.minutes)} session</div>
           </div>
+        </div>
 
-          {!(focusLock&&running)&&(
-            <div style={{display:"flex",gap:0,marginBottom:24,background:th.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${th.border}`,width:"100%"}}>
-              {[
-                {label:"ELAPSED",val:fmtCountdown(elapsed),color:cat.color},
-                {label:"DONE",   val:`${Math.round(pct*100)}%`,color:th.textMuted},
-                {label:"EST. FINISH",val:estFinishStr,color:accent},
-              ].map((s,i)=>(
-                <div key={s.label} style={{flex:1,textAlign:"center",padding:"12px 6px",borderRight:i<2?`1px solid ${th.border}`:"none"}}>
-                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:11,color:s.color,fontWeight:700}}>{s.val}</div>
-                  <div style={{fontSize:9,color:th.textDim,letterSpacing:0.8,marginTop:3}}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Controls */}
-          <div style={{display:"flex",gap:12,width:"100%"}}>
-            {!finished&&(
-              <button onClick={()=>setRunning(p=>!p)}
-                style={{flex:1,background:running?th.surface:cat.color,border:running?`1.5px solid ${th.border}`:"none",borderRadius:14,padding:"17px",color:running?th.text:"#fff",fontSize:16,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all 0.22s",boxShadow:running?"none":`0 6px 24px ${cat.color}55`}}>
-                {running?"Pause":remaining===totalSecs?"Start":"Resume"}
-              </button>
-            )}
-            {remaining<totalSecs&&!finished&&!(focusLock&&running)&&(
-              <button onClick={()=>{ setRemaining(totalSecs); setRunning(false); setStartedAt(null); sessionStart.current=null; }}
-                style={{background:th.surface,border:`1.5px solid ${th.border}`,borderRadius:14,padding:"17px 18px",color:th.textDim,fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>↺</button>
-            )}
+        {/* Stats row */}
+        {!(focusLock&&running)&&(
+          <div style={{display:"flex",gap:0,marginBottom:20,background:th.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${th.border}`,width:"100%",maxWidth:400,flexShrink:0}}>
+            {[
+              {label:"ELAPSED",    val:fmtCountdown(elapsed),     color:cat.color},
+              {label:"DONE",       val:`${Math.round(pct*100)}%`, color:th.textMuted},
+              {label:"EST. FINISH",val:estFinishStr,               color:accent},
+            ].map((s,i)=>(
+              <div key={s.label} style={{flex:1,textAlign:"center",padding:"12px 6px",borderRight:i<2?`1px solid ${th.border}`:"none"}}>
+                <div style={{fontFamily:"'Space Mono',monospace",fontSize:"clamp(10px,2.5vw,12px)",color:s.color,fontWeight:700}}>{s.val}</div>
+                <div style={{fontSize:"clamp(8px,2vw,10px)",color:th.textDim,letterSpacing:0.8,marginTop:3}}>{s.label}</div>
+              </div>
+            ))}
           </div>
-          {pct>0&&!finished&&!(focusLock&&running)&&(
-            <button onClick={()=>onDone(getActualMins())}
-              style={{marginTop:12,width:"100%",background:"none",border:"1.5px solid #81B29A33",borderRadius:14,padding:"15px",color:"#81B29A",fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
-              ✓ Mark as Complete Early
+        )}
+
+        {/* Buttons */}
+        <div style={{display:"flex",gap:12,width:"100%",maxWidth:400,flexShrink:0}}>
+          {!finished&&(
+            <button onClick={()=>setRunning(p=>!p)}
+              style={{flex:1,background:running?th.surface:cat.color,border:running?`1.5px solid ${th.border}`:"none",borderRadius:14,padding:"17px",color:running?th.text:"#fff",fontSize:17,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all 0.22s",boxShadow:running?"none":`0 6px 24px ${cat.color}55`}}>
+              {running?"Pause":remaining===totalSecs?"Start":"Resume"}
             </button>
           )}
+          {remaining<totalSecs&&!finished&&!(focusLock&&running)&&(
+            <button onClick={()=>{ setRemaining(totalSecs); setRunning(false); setStartedAt(null); sessionStart.current=null; }}
+              style={{background:th.surface,border:`1.5px solid ${th.border}`,borderRadius:14,padding:"17px 20px",color:th.textDim,fontSize:15,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>↺</button>
+          )}
         </div>
+        {pct>0&&!finished&&!(focusLock&&running)&&(
+          <button onClick={()=>onDone(getActualMins())}
+            style={{marginTop:12,width:"100%",maxWidth:400,background:"none",border:"1.5px solid #81B29A33",borderRadius:14,padding:"15px",color:"#81B29A",fontSize:15,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,flexShrink:0}}>
+            ✓ Mark as Complete Early
+          </button>
+        )}
       </div>
-    </PageTransition>
+    </div>
   );
 }
 
