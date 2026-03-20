@@ -199,7 +199,7 @@ const INITIAL_TEMPLATES=[
 const DEFAULT_SETTINGS={
   sortBy:"priority",accentColor:"#E07A5F",compactView:false,
   showStreak:true,defaultMinutes:25,notificationsOn:false,
-  hiddenSorts:[],timerSound:"chime",theme:"dark",countdownMode:"mm:ss",
+  hiddenSorts:[],timerSound:"chime",theme:"dark",countdownMode:"mm:ss",reducedMotion:false,
 };
 
 // ─── Page Transition ──────────────────────────────────────────────────────────
@@ -541,6 +541,7 @@ export default function App(){
     <div style={{fontFamily:"'DM Sans',sans-serif",background:th.bg,minHeight:"100vh",color:th.text,display:"flex",flexDirection:"column",maxWidth:430,margin:"0 auto",position:"relative",overflowX:"hidden"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
       <style>{`
+        ${settings.reducedMotion?`*,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important;transition-delay:0ms!important;}`:""}
         @keyframes slideUp    {from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
         @keyframes slideDown  {from{transform:translateY(0);opacity:1}to{transform:translateY(100%);opacity:0}}
         @keyframes fadeIn     {from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:scale(1)}}
@@ -1417,6 +1418,7 @@ function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th
             </div>
           </div>
           <Row icon="📋" label="Compact View" sub="Smaller task cards on home" right={<Toggle val={settings.compactView} onChange={v=>setSettings(p=>({...p,compactView:v}))}/>}/>
+          <Row icon="🧘" label="Reduce Motion" sub="Turns off all animations & transitions" right={<Toggle val={settings.reducedMotion||false} onChange={v=>setSettings(p=>({...p,reducedMotion:v}))}/>}/>
         </>}
 
         {section==="analytics"&&<>
@@ -1715,7 +1717,8 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
   const[startedAt,  setStartedAt] =useState(null);
   const[focusLock,  setFocusLock] =useState(false);  // NOT auto-enabled on start
   const[finished,   setFinished]  =useState(false);
-  const[showBurst,  setShowBurst] =useState(false);
+  const[showBurst,    setShowBurst]    =useState(false);
+  const[localWorkTime,setLocalWorkTime]=useState(task.workTime||"");
   const sessionStart=useRef(null);
   const cat  = getCat(task.category,categories);
   const pct  = 1-remaining/totalSecs;
@@ -1727,6 +1730,8 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
     if(!running) return;
     if(!startedAt) setStartedAt(Date.now());
     if(!sessionStart.current) sessionStart.current=Date.now();
+    // Auto-stamp work time if not set
+    if(!localWorkTime) setLocalWorkTime(nowTimeStr());
     const id=setInterval(()=>setRemaining(p=>{
       if(p<=1){
         clearInterval(id); setRunning(false); setFinished(true);
@@ -1757,9 +1762,17 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
   const elapsed = totalSecs-remaining;
   function getActualMins(){ if(!sessionStart.current) return task.minutes; return Math.max(1,Math.round((Date.now()-sessionStart.current)/60000)); }
 
+  // estFinish recalculates live: uses localWorkTime (auto-set on start) + remaining
   const estFinishStr=(()=>{
-    if(task.workTime){ const[h,m]=task.workTime.split(":").map(Number); const b=new Date(); b.setHours(h,m,0,0); const f=new Date(b.getTime()+task.minutes*60000); return`${f.getHours()%12||12}:${String(f.getMinutes()).padStart(2,"0")} ${f.getHours()>=12?"PM":"AM"}`; }
-    const origin=startedAt||Date.now(); const f=new Date(origin+remaining*1000);
+    if(localWorkTime){
+      const[h,m]=localWorkTime.split(":").map(Number);
+      const b=new Date(); b.setHours(h,m,0,0);
+      // base + full duration = when task will finish
+      const f=new Date(b.getTime()+task.minutes*60000);
+      return`${f.getHours()%12||12}:${String(f.getMinutes()).padStart(2,"0")} ${f.getHours()>=12?"PM":"AM"}`;
+    }
+    // fallback: now + remaining
+    const f=new Date(Date.now()+remaining*1000);
     return`${f.getHours()%12||12}:${String(f.getMinutes()).padStart(2,"0")} ${f.getHours()>=12?"PM":"AM"}`;
   })();
 
@@ -1841,12 +1854,28 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
       transition:"background 0.6s",
       overflow:"hidden",
       zIndex:1,
+      animation:"timerEnter 0.55s cubic-bezier(0.22,1,0.36,1) forwards",
     }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
       <style>{`
         @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.45}}
         @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes timerEnter{
+          0%  { opacity:0; clip-path:circle(0% at 90% 85%); transform:scale(0.96); }
+          40% { opacity:1; }
+          100%{ opacity:1; clip-path:circle(150% at 50% 50%); transform:scale(1); }
+        }
+        @keyframes timerContentIn{
+          0%  { opacity:0; transform:translateY(20px) scale(0.97); }
+          100%{ opacity:1; transform:translateY(0) scale(1); }
+        }
+        .timer-content{ animation: timerContentIn 0.45s cubic-bezier(0.22,1,0.36,1) 0.25s both; }
+
+        /* Edge glow — slides in from off-screen when running */
+
       `}</style>
+
+
 
       {/* Header */}
       <div style={{
@@ -1876,7 +1905,7 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
       )}
 
       {/* Main content — fills remaining height */}
-      <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 24px 24px",gap:0,minHeight:0}}>
+      <div className="timer-content" style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"0 24px 24px",gap:0,minHeight:0}}>
 
         {/* Category + title */}
         <div style={{opacity:focusLock&&running?0.2:1,transition:"opacity 0.4s",textAlign:"center",marginBottom:focusLock&&running?12:20,flexShrink:0}}>
@@ -1917,18 +1946,30 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
 
         {/* Stats row */}
         {!(focusLock&&running)&&(
-          <div style={{display:"flex",gap:0,marginBottom:20,background:th.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${th.border}`,width:"100%",maxWidth:400,flexShrink:0}}>
-            {[
-              {label:"ELAPSED",    val:fmtCountdown(elapsed),     color:cat.color},
-              {label:"DONE",       val:`${Math.round(pct*100)}%`, color:th.textMuted},
-              {label:"EST. FINISH",val:estFinishStr,               color:accent},
-            ].map((s,i)=>(
-              <div key={s.label} style={{flex:1,textAlign:"center",padding:"12px 6px",borderRight:i<2?`1px solid ${th.border}`:"none"}}>
-                <div style={{fontFamily:"'Space Mono',monospace",fontSize:"clamp(10px,2.5vw,12px)",color:s.color,fontWeight:700}}>{s.val}</div>
-                <div style={{fontSize:"clamp(8px,2vw,10px)",color:th.textDim,letterSpacing:0.8,marginTop:3}}>{s.label}</div>
-              </div>
-            ))}
-          </div>
+          <>
+            <div style={{display:"flex",gap:0,marginBottom:10,background:th.surface,borderRadius:14,overflow:"hidden",border:`1px solid ${th.border}`,width:"100%",maxWidth:400,flexShrink:0}}>
+              {[
+                {label:"ELAPSED",    val:fmtCountdown(elapsed),     color:cat.color},
+                {label:"DONE",       val:`${Math.round(pct*100)}%`, color:th.textMuted},
+                {label:"EST. FINISH",val:estFinishStr,               color:accent},
+              ].map((s,i)=>(
+                <div key={s.label} style={{flex:1,textAlign:"center",padding:"12px 6px",borderRight:i<2?`1px solid ${th.border}`:"none"}}>
+                  <div style={{fontFamily:"'Space Mono',monospace",fontSize:"clamp(10px,2.5vw,12px)",color:s.color,fontWeight:700}}>{s.val}</div>
+                  <div style={{fontSize:"clamp(8px,2vw,10px)",color:th.textDim,letterSpacing:0.8,marginTop:3}}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+            {/* Work time row — shows current start time with update button */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:14,flexShrink:0}}>
+              <span style={{fontSize:12,color:th.textMuted}}>
+                🕐 Start: <span style={{color:"#7B9EC9",fontFamily:"'Space Mono',monospace"}}>{localWorkTime?fmtTime(localWorkTime):"not set"}</span>
+              </span>
+              <button onClick={()=>setLocalWorkTime(nowTimeStr())}
+                style={{background:"#7B9EC922",border:"1px solid #7B9EC944",borderRadius:8,padding:"4px 10px",color:"#7B9EC9",fontSize:11,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
+                {localWorkTime?"Started late? Update":"Set to now"}
+              </button>
+            </div>
+          </>
         )}
 
         {/* Buttons */}
