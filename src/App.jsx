@@ -909,6 +909,8 @@ export default function App(){
         onForceOverdue={()=>{ setTasks(prev=>prev.map((t,i)=>i===0?{...t,date:yesterdayStr(),done:false}:t)); setShowDevMenu(false); }}
         onForceSummary={()=>{ setSummaryData({done:5,totalFocus:120,streak:streak||3}); setShowSummary(true); setShowDevMenu(false); }}
         onAddTestTask={()=>{ setTasks(prev=>[...prev,{id:Date.now(),title:"Test task "+Date.now()%1000,category:"work",priority:"high",minutes:30,workTime:"",dueTime:"",notes:"Added from dev menu",done:false,date:todayStr(),createdAt:Date.now(),recur:"none",subtasks:[],manualOrder:prev.length,actualMinutes:0}]); setShowDevMenu(false); }}
+        onAddTestRecur={()=>{ setTasks(prev=>[...prev,{id:Date.now(),title:"Daily test task",category:"health",priority:"medium",minutes:20,workTime:"",dueTime:"",notes:"Dev test recurring",done:false,date:todayStr(),createdAt:Date.now(),recur:"daily",subtasks:[],manualOrder:prev.length,actualMinutes:0,recurStreak:0}]); setShowDevMenu(false); }}
+        onSolidifyRecur={()=>{ triggerRecur(); setShowDevMenu(false); }}
       />}
 
       {/* ══ Onboarding ══ */}
@@ -1153,11 +1155,13 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAp
             <div style={{display:"flex",alignItems:"center",gap:5}}>
               <div style={{fontSize:compact?13:14,fontWeight:500,textDecoration:task.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:task.done?th.textMuted:th.text,flex:1}}>{task.title}</div>
               {task.recur&&task.recur!=="none"&&(()=>{
-                const srcTask=task;
-                const streak=(srcTask.recurStreak||0);
+                const streak=(task.recurStreak||0);
+                const pendingToday=task.done&&task.date===todayStr();
+                const displayStreak=streak;
+                const color=streak>=10?"#F2CC8F":streak>=5?accent:th.textMuted;
                 return(
-                  <span style={{fontSize:9,color:streak>=10?"#F2CC8F":streak>=5?accent:th.textMuted,background:streak>=5?accent+"18":th.surface2,borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:streak>=5?700:400,display:"flex",alignItems:"center",gap:2}}>
-                    ↻{streak>0?` ${streak}x`:""}
+                  <span style={{fontSize:9,color:pendingToday?"#81B29A":color,background:pendingToday?"#81B29A22":streak>=5?accent+"18":th.surface2,borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:pendingToday||streak>=5?700:400,display:"flex",alignItems:"center",gap:2}}>
+                    ↻{pendingToday?` ${displayStreak}x ✓`:displayStreak>0?` ${displayStreak}x`:""}
                   </span>
                 );
               })()}
@@ -1236,7 +1240,7 @@ function DailySummary({data,accent,onClose}){
 }
 
 // ─── Dev Menu ─────────────────────────────────────────────────────────────────
-function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOverdue,onForceSummary,onAddTestTask}){
+function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOverdue,onForceSummary,onAddTestTask,onAddTestRecur,onSolidifyRecur}){
   const[hapticResult,setHapticResult]=useState("");
   const[soundPlaying,setSoundPlaying]=useState("");
   const[animKey,setAnimKey]=useState(0);
@@ -1365,6 +1369,8 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {[
               {label:"Add test task",          sub:"Adds a task to today",              fn:onAddTestTask,      color:"#7B9EC9"},
+              {label:"Add recurring test task",sub:"Daily task to test recur count",   fn:onAddTestRecur,     color:"#7B9EC9"},
+              {label:"Solidify recur counts",  sub:"Runs next-day logic right now",    fn:onSolidifyRecur,    color:"#C9A7EB"},
               {label:"Show onboarding again",  sub:"Resets the seen flag",              fn:onResetOnboarding,  color:"#81B29A"},
               {label:"Force overdue task",     sub:"Makes first task overdue",          fn:onForceOverdue,     color:"#F2CC8F"},
               {label:"Show daily summary",     sub:"Fires the completion modal",        fn:onForceSummary,     color:"#C9A7EB"},
@@ -1595,6 +1601,8 @@ function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th
 function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave,onClose,accent,th}){
   const[form,setForm]=useState({subtasks:[],...initialData,recur:initialData?.recur||"none"});
   const[showNewCat,setShowNewCat]=useState(false);
+  const[editingStreak,setEditingStreak]=useState(false);
+  const[streakInput,setStreakInput]=useState("");
   const[newCatName,setNewCatName]=useState("");
   const[newCatColor,setNewCatColor]=useState("#7B9EC9");
   const[newSubtask,setNewSubtask]=useState("");
@@ -1683,12 +1691,48 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
           </FF>
 
           <FF label="Recurring" th={th}>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:form.recur&&form.recur!=="none"&&mode==="edit"?8:0}}>
               {RECUR_OPTIONS.map(r=>(
                 <button key={r.id} onClick={()=>setForm(f=>({...f,recur:r.id}))}
                   style={{background:(form.recur||"none")===r.id?accent+"25":th.surface,border:`1.5px solid ${(form.recur||"none")===r.id?accent:th.border}`,borderRadius:10,padding:"8px 13px",color:(form.recur||"none")===r.id?accent:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:500,transition:"all 0.15s"}}>{r.label}</button>
               ))}
             </div>
+            {form.recur&&form.recur!=="none"&&mode==="edit"&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:th.surface,borderRadius:10,padding:"10px 14px",border:`1px solid ${th.border}`}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:14}}>↻</span>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:500}}>Completed {form.recurStreak||0} time{(form.recurStreak||0)!==1?"s":""}</div>
+                    <div style={{fontSize:11,color:th.textMuted,marginTop:1}}>Across all occurrences</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {editingStreak?(
+                    <>
+                      <input autoFocus type="number" min="0" value={streakInput}
+                        onChange={e=>setStreakInput(e.target.value)}
+                        onKeyDown={e=>{ if(e.key==="Enter"){ const n=parseInt(streakInput,10); if(!isNaN(n)&&n>=0) setForm(f=>({...f,recurStreak:n})); setEditingStreak(false); } if(e.key==="Escape") setEditingStreak(false); }}
+                        style={{width:52,background:th.bg,border:`1.5px solid ${accent}`,borderRadius:8,padding:"5px 8px",color:th.text,fontSize:13,fontFamily:"'Space Mono',monospace",textAlign:"center"}}/>
+                      <button onClick={()=>{ const n=parseInt(streakInput,10); if(!isNaN(n)&&n>=0) setForm(f=>({...f,recurStreak:n})); setEditingStreak(false); }}
+                        style={{background:accent,border:"none",borderRadius:8,padding:"5px 10px",color:"#fff",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>✓</button>
+                      <button onClick={()=>setEditingStreak(false)}
+                        style={{background:"none",border:`1px solid ${th.border2}`,borderRadius:8,padding:"5px 8px",color:th.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>✕</button>
+                    </>
+                  ):(
+                    <>
+                      <button onClick={()=>{ setStreakInput(String(form.recurStreak||0)); setEditingStreak(true); }}
+                        style={{background:accent+"22",border:`1px solid ${accent}44`,borderRadius:8,padding:"5px 10px",color:accent,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
+                        Edit
+                      </button>
+                      <button onClick={()=>setForm(f=>({...f,recurStreak:0}))}
+                        style={{background:"#E07A5F22",border:"1px solid #E07A5F44",borderRadius:8,padding:"5px 10px",color:"#E07A5F",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>
+                        Reset
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </FF>
 
           <FF label="Priority" th={th}>
