@@ -105,6 +105,15 @@ function shouldRecurToday(task,dateStr){
   if(task.recur==="monthly")  return d.getDate()===orig.getDate();
   return false;
 }
+function taskAgeDays(task){
+  if(task.done||!task.createdAt) return 0;
+  return Math.floor((Date.now()-task.createdAt)/(1000*60*60*24));
+}
+function ageColor(days){
+  if(days>=7)  return "#E07A5F"; // red — week+
+  if(days>=3)  return "#F2CC8F"; // yellow — 3+ days
+  return null;
+}
 function buildSortOptions(categories,hiddenSorts=[]){
   const base=BASE_SORT_OPTIONS.filter(s=>!hiddenSorts.includes(s.id));
   const cats=categories.map(c=>({id:"cat_"+c.id,label:c.label,icon:"●",color:c.color,isCat:true})).filter(s=>!hiddenSorts.includes(s.id));
@@ -220,7 +229,6 @@ export default function App(){
   const[deleteConfirm,  setDeleteConfirm] =useState(null);
   const[justDone,       setJustDone]      =useState(null);
   const[justDeleted,    setJustDeleted]   =useState(null);
-  const[justEdited,     setJustEdited]    =useState(null);
   const[justAppeared,   setJustAppeared]  =useState(null);
   const[streak,         setStreak]        =useState(0);
   const[streakLastDate, setStreakLastDate]=useState(null);
@@ -232,7 +240,9 @@ export default function App(){
   const[showTemplates,  setShowTemplates] =useState(false);
   const[showOnboarding, setShowOnboarding]=useState(false);
   const[showDevMenu,    setShowDevMenu]   =useState(false);
+  const[listSearch,     setListSearch]    =useState("");
   const[notifGranted,   setNotifGranted]  =useState(false);
+  const[focusLog,       setFocusLog]      =useState([]);
   const prevVisibleIds =useRef(new Set());
   const dragStart      =useRef(null);
   const summaryShownFor=useRef(null);
@@ -255,6 +265,7 @@ export default function App(){
       if(s)   setSettings(p=>({...p,...JSON.parse(s)}));
       if(st)  { const{count,lastDate}=JSON.parse(st); setStreak(count||0); setStreakLastDate(lastDate||null); }
       if(tmpl) setTemplates(JSON.parse(tmpl));
+      const fl=lsGet('tf_focuslog'); if(fl) setFocusLog(JSON.parse(fl));
       if(!ob)  setShowOnboarding(true);
       setNotifGranted(typeof Notification!=="undefined"&&Notification.permission==="granted");
     }catch(e){ setShowOnboarding(true); }
@@ -266,6 +277,7 @@ export default function App(){
   useEffect(()=>{ if(!loaded)return; lsSet('tf_settings',settings); },[settings,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_streak',{count:streak,lastDate:streakLastDate}); },[streak,streakLastDate,loaded]);
   useEffect(()=>{ if(!loaded)return; lsSet('tf_templates',templates); },[templates,loaded]);
+  useEffect(()=>{ if(!loaded)return; lsSet('tf_focuslog',focusLog); },[focusLog,loaded]);
 
   // ── Recur ────────────────────────────────────────────────────────────────────
   useEffect(()=>{
@@ -314,6 +326,7 @@ export default function App(){
       },600);
     }
   },[tasks,loaded]);
+
 
   // ── Notification scheduling ─────────────────────────────────────────────────
   useEffect(()=>{
@@ -387,7 +400,6 @@ export default function App(){
       setTasks(prev=>[...prev,newTask]);
     } else {
       setTasks(prev=>prev.map(x=>x.id===f.id?{...f}:x));
-      setJustEdited(f.id); setTimeout(()=>setJustEdited(null),900);
     }
     setTaskForm(null);
   }
@@ -395,6 +407,11 @@ export default function App(){
     haptic("error"); setDeleteConfirm(null); setActionMenu(null);
     setJustDeleted(id);
     setTimeout(()=>{ setTasks(prev=>prev.filter(t=>t.id!==id)); setJustDeleted(null); },420);
+  }
+  function moveToToday(id){
+    haptic("medium");
+    setTasks(prev=>prev.map(t=>t.id===id?{...t,date:todayStr()}:t));
+    setActionMenu(null);
   }
   function postponeTask(id){
     haptic("medium");
@@ -461,7 +478,23 @@ export default function App(){
   if(timerTask) return(
     <TimerPage task={timerTask} categories={categories} accent={accent} timerSound={settings.timerSound} countdownMode={settings.countdownMode||"mm:ss"} th={th}
       onBack={()=>setTimerTask(null)}
-      onDone={(actualMins)=>{ const id=timerTask.id; setTasks(prev=>prev.map(t=>t.id===id?{...t,done:true,actualMinutes:(t.actualMinutes||0)+actualMins}:t)); setTimerTask(null); }}/>
+      onDone={(actualMins)=>{
+      const id=timerTask.id;
+      const t=tasks.find(x=>x.id===id);
+      if(t){
+        setFocusLog(prev=>[{
+          id:Date.now(),
+          taskTitle:t.title,
+          category:t.category,
+          estimatedMins:t.minutes,
+          actualMins,
+          date:todayStr(),
+          ts:Date.now(),
+        },...prev].slice(0,200)); // keep last 200 sessions
+      }
+      setTasks(prev=>prev.map(x=>x.id===id?{...x,done:true,actualMinutes:(x.actualMinutes||0)+actualMins}:x));
+      setTimerTask(null);
+    }}/>
   );
   if(taskForm) return(
     <TaskFormPage mode={taskForm.mode} initialData={taskForm.task} categories={categories} setCategories={setCategories} settings={settings} onSave={saveTask} onClose={()=>setTaskForm(null)} accent={accent} th={th}/>
@@ -474,7 +507,6 @@ export default function App(){
         @keyframes slideUp    {from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
         @keyframes slideDown  {from{transform:translateY(0);opacity:1}to{transform:translateY(100%);opacity:0}}
         @keyframes fadeIn     {from{opacity:0;transform:scale(0.96)}to{opacity:1;transform:scale(1)}}
-        @keyframes editPulse  {0%{box-shadow:0 0 0 0 rgba(255,255,255,0.15)}40%{box-shadow:0 0 0 6px rgba(255,255,255,0.08)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
         @keyframes cardSlideIn  {0%{opacity:0;transform:translateY(16px) scale(0.98)}55%{opacity:1;transform:translateY(-2px) scale(1.003)}100%{opacity:1;transform:translateY(0) scale(1)}}
         @keyframes cardSlideOut {0%{opacity:1;transform:translateY(0) scale(1)}100%{opacity:0;transform:translateY(10px) scale(0.96)}}
         @keyframes wrapShrink   {0%{max-height:200px;margin-bottom:9px;opacity:1}30%{opacity:0}100%{max-height:0;margin-bottom:0;opacity:0}}
@@ -484,7 +516,6 @@ export default function App(){
         @keyframes burstFade    {0%{opacity:1}100%{opacity:0}}
         @keyframes overduePulse {0%,100%{opacity:1}50%{opacity:0.6}}
         .task-card{transition:opacity 0.3s ease,transform 0.3s cubic-bezier(0.4,0,0.2,1);}
-        .task-card.edited{animation:editPulse 0.8s ease forwards;}
         .task-wrap{overflow:hidden;}
         .task-wrap.collapsing{animation:wrapShrink 0.38s cubic-bezier(0.55,0,0.1,1) forwards;pointer-events:none;}
         .task-wrap.collapsing .task-card{animation:cardSlideOut 0.2s cubic-bezier(0.4,0,1,1) forwards;}
@@ -578,7 +609,7 @@ export default function App(){
               <div style={{display:"flex",flexDirection:"column",gap:0}}>
                 {homeList.slice(0,5).map(task=>(
                   <TaskCard key={task.id} task={task} {...sharedCardProps} compact={settings.compactView}
-                    isSliding={justDone===task.id||justDeleted===task.id} isEdited={justEdited===task.id} isAppearing={justAppeared===task.id}
+                    isSliding={justDone===task.id||justDeleted===task.id} isAppearing={justAppeared===task.id}
                     showMoveButtons={settings.sortBy==="manual"} onMoveUp={moveTaskUp} onMoveDown={moveTaskDown}/>
                 ))}
                 {homeList.length===0&&<div style={{textAlign:"center",color:th.textDim,padding:"28px 0",fontSize:14}}>{todayDone.length>0?"All tasks complete! 🎉":"Nothing scheduled today."}</div>}
@@ -601,9 +632,27 @@ export default function App(){
         <PageTransition>
           <div style={{flex:1,overflowY:"auto",overflowX:"hidden",padding:"52px 22px 80px"}}>
             <div style={{fontSize:11,color:th.textDim,letterSpacing:1.5,textTransform:"uppercase",fontFamily:"'Space Mono',monospace",marginBottom:4}}>All Tasks</div>
-            <div style={{fontSize:21,fontWeight:600,marginBottom:22,letterSpacing:-0.3}}>Everything</div>
-            {sortedDates.length===0&&<div style={{textAlign:"center",color:th.textDim,marginTop:60,fontSize:14}}>No tasks yet — hit + to add one!</div>}
-            {sortedDates.map(date=>{
+            <div style={{fontSize:21,fontWeight:600,marginBottom:16,letterSpacing:-0.3}}>Everything</div>
+            {/* Search bar */}
+            <div style={{position:"relative",marginBottom:20}}>
+              <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:th.textDim,pointerEvents:"none"}}>🔍</span>
+              <input value={listSearch} onChange={e=>setListSearch(e.target.value)} placeholder="Search tasks…"
+                style={{width:"100%",background:th.surface,border:`1px solid ${th.border2}`,borderRadius:12,padding:"11px 36px 11px 38px",color:th.text,fontSize:14,boxSizing:"border-box"}}
+                onFocus={e=>e.target.style.borderColor=accent} onBlur={e=>e.target.style.borderColor=th.border2}/>
+              {listSearch&&<button onClick={()=>setListSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:14,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>}
+            </div>
+            {sortedDates.length===0&&!listSearch&&<div style={{textAlign:"center",color:th.textDim,marginTop:60,fontSize:14}}>No tasks yet — hit + to add one!</div>}
+            {(() => {
+              const q=listSearch.toLowerCase().trim();
+              const filteredDates=q
+                ? sortedDates.filter(date=>groupedByDate[date].some(t=>
+                    t.title.toLowerCase().includes(q)||
+                    (t.notes||"").toLowerCase().includes(q)||
+                    getCat(t.category,categories).label.toLowerCase().includes(q)
+                  ))
+                : sortedDates;
+              if(q&&filteredDates.length===0) return <div style={{textAlign:"center",color:th.textDim,marginTop:40,fontSize:14}}>No results for "{listSearch}"</div>;
+              return filteredDates.map(date=>{
               const dayTasks=groupedByDate[date];
               const isOverdueGroup=date===yesterdayStr();
               const inc=sortList(dayTasks.filter(t=>!t.done),settings.sortBy);
@@ -621,7 +670,7 @@ export default function App(){
                     <div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace"}}>{done.length}/{dayTasks.length}</div>
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:0}}>
-                    {inc.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full overdue={isOverdueGroup} isSliding={justDone===task.id||justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+                    {inc.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full overdue={isOverdueGroup} isSliding={justDone===task.id||justDeleted===task.id}/>)}
                     {inc.length>0&&done.length>0&&(
                       <div style={{display:"flex",alignItems:"center",gap:10,margin:"8px 0 5px"}}>
                         <div style={{flex:1,height:1,background:`linear-gradient(to right,transparent,${th.border})`}}/>
@@ -629,11 +678,11 @@ export default function App(){
                         <div style={{flex:1,height:1,background:`linear-gradient(to left,transparent,${th.border})`}}/>
                       </div>
                     )}
-                    {done.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full isSliding={justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+                    {done.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full isSliding={justDeleted===task.id}/>)}
                   </div>
                 </div>
               );
-            })}
+            })})()}
           </div>
         </PageTransition>
       )}
@@ -641,7 +690,7 @@ export default function App(){
       {/* ══ SETTINGS ══ */}
       {tab==="settings"&&(
         <PageTransition>
-          <SettingsPage settings={settings} setSettings={setSettings} analytics={analytics} categories={categories} tasks={tasks} accent={accent} th={th} streak={streak} templates={templates} notifGranted={notifGranted} onEnableNotifications={enableNotifications} onResetStreak={()=>{setStreak(0);setStreakLastDate(null);}} onDeleteTemplate={deleteTemplate} onAddFromTemplate={addFromTemplate}/>
+          <SettingsPage settings={settings} setSettings={setSettings} analytics={analytics} categories={categories} tasks={tasks} accent={accent} th={th} streak={streak} templates={templates} focusLog={focusLog} notifGranted={notifGranted} onEnableNotifications={enableNotifications} onResetStreak={()=>{setStreak(0);setStreakLastDate(null);}} onDeleteTemplate={deleteTemplate} onAddFromTemplate={addFromTemplate}/>
         </PageTransition>
       )}
 
@@ -666,7 +715,7 @@ export default function App(){
       {/* ══ Sheet ══ */}
       {sheetOpen&&(
         <Sheet todayInc={sortList(todayInc,settings.sortBy)} todayDone={todayDone} tomorrowTasks={sortList(tomorrowAll,settings.sortBy)} overdueAll={overdueAll}
-          categories={categories} accent={accent} th={th} justDone={justDone} justDeleted={justDeleted} justEdited={justEdited}
+          categories={categories} accent={accent} th={th} justDone={justDone} justDeleted={justDeleted}
           expandedNote={expandedNote} onToggleNote={id=>setExpandedNote(n=>n===id?null:id)}
           onToggle={toggleDone} onToggleSubtask={toggleSubtask}
           onStart={t=>{ setSheetOpen(false); setTimerTask(t); }}
@@ -686,7 +735,8 @@ export default function App(){
             </div>
             {[
               {icon:"✏️",label:"Edit Task",      sub:"Modify all details",       action:()=>{ setTaskForm({mode:"edit",task:{...actionMenu}}); setActionMenu(null); }, color:th.text},
-              {icon:"📅",label:"Postpone",        sub:"Move to tomorrow",         action:()=>postponeTask(actionMenu.id),                                             color:"#7B9EC9"},
+              ...(actionMenu.date!==todayStr()?[{icon:"📥",label:"Move to Today", sub:"Pull into today's list",   action:()=>moveToToday(actionMenu.id),                                              color:accent}]:[]),
+              ...(actionMenu.date===todayStr()?[{icon:"📅",label:"Postpone",      sub:"Move to tomorrow",         action:()=>postponeTask(actionMenu.id),                                             color:"#7B9EC9"}]:[]),
               {icon:"📋",label:"Save as Template",sub:"Reuse this task config",   action:()=>{ saveTemplate(actionMenu); setActionMenu(null); },                      color:"#81B29A"},
               {icon:"🗑️",label:"Delete Task",    sub:"This can't be undone",     action:()=>setDeleteConfirm(actionMenu.id),                                         color:"#E07A5F"},
             ].map(item=>(
@@ -842,7 +892,7 @@ function SortMenu({sortBy,hiddenSorts,categories,accent,th,onSelect,onToggleHide
 }
 
 // ─── Sheet — swipe up to open, swipe down to dismiss, scroll inside ───────────
-function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th,justDone,justDeleted,justEdited,expandedNote,onToggleNote,onToggle,onToggleSubtask,onStart,onMenu,onClose,onMoveAllOverdue,doneTodayCount,totalTodayCount}){
+function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th,justDone,justDeleted,expandedNote,onToggleNote,onToggle,onToggleSubtask,onStart,onMenu,onClose,onMoveAllOverdue,doneTodayCount,totalTodayCount}){
   const[showDone,setShowDone]=useState(false);
   const[showOverdue,setShowOverdue]=useState(true);
   const[closing,setClosing]=useState(false);
@@ -894,14 +944,14 @@ function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th
               <div style={{flex:1,height:1,background:"#E07A5F33"}}/>
               <button onClick={onMoveAllOverdue} style={{background:"#E07A5F22",border:"1px solid #E07A5F44",borderRadius:8,padding:"5px 10px",color:"#E07A5F",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Move all →</button>
             </div>
-            {showOverdue&&overdueAll.map(task=><TaskCard key={task.id} task={task} {...props} full overdue isSliding={justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+            {showOverdue&&overdueAll.map(task=><TaskCard key={task.id} task={task} {...props} full overdue isSliding={justDeleted===task.id}/>)}
           </div>
         )}
 
         {todayInc.length===0&&todayDone.length===0&&<div style={{textAlign:"center",color:th.textDim,padding:"28px 0",fontSize:14}}>Nothing scheduled today!</div>}
         {todayInc.length===0&&todayDone.length>0&&<div style={{textAlign:"center",color:"#81B29A",padding:"12px 0 18px",fontSize:13,fontWeight:500}}>All today's tasks complete! 🎉</div>}
         <div style={{display:"flex",flexDirection:"column",gap:0}}>
-          {todayInc.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDone===task.id||justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+          {todayInc.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDone===task.id||justDeleted===task.id}/>)}
         </div>
 
         {todayDone.length>0&&todayInc.length>0&&(
@@ -918,7 +968,7 @@ function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th
         {todayDone.length>0&&(showDone||todayInc.length===0)&&(
           <div style={{display:"flex",flexDirection:"column",gap:0,animation:"fadeIn 0.22s ease"}}>
             {todayInc.length===0&&<div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}><div style={{flex:1,height:1,background:th.border}}/><span style={{fontSize:11,color:"#81B29A",fontFamily:"'Space Mono',monospace"}}>{todayDone.length} COMPLETED</span><div style={{flex:1,height:1,background:th.border}}/></div>}
-            {todayDone.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+            {todayDone.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDeleted===task.id}/>)}
           </div>
         )}
 
@@ -929,7 +979,7 @@ function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th
               <div style={{flex:1,height:1,background:th.border}}/>
               <div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace"}}>{tomorrowTasks.length} task{tomorrowTasks.length!==1?"s":""}</div>
             </div>
-            {tomorrowTasks.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDeleted===task.id} isEdited={justEdited===task.id}/>)}
+            {tomorrowTasks.map(task=><TaskCard key={task.id} task={task} {...props} full isSliding={justDeleted===task.id}/>)}
           </div>
         )}
         {tomorrowTasks.length===0&&<div style={{marginTop:28,textAlign:"center",color:th.textDim,fontSize:13}}>Nothing scheduled for tomorrow.</div>}
@@ -939,7 +989,7 @@ function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th
 }
 
 // ─── Task Card ────────────────────────────────────────────────────────────────
-function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isEdited,isAppearing,expandedNote,onToggleNote,showMoveButtons,onMoveUp,onMoveDown,onToggle,onToggleSubtask,onStart,onMenu}){
+function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAppearing,expandedNote,onToggleNote,showMoveButtons,onMoveUp,onMoveDown,onToggle,onToggleSubtask,onStart,onMenu}){
   const cat=getCat(task.category,categories);
   const pri=PRIORITY_META[task.priority]||PRIORITY_META.medium;
   const isExpanded=expandedNote===task.id;
@@ -978,7 +1028,7 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isEd
       {swiping&&swipeAction==="timer"&&<div style={{position:"absolute",inset:0,borderRadius:compact?12:14,background:accent+"33",display:"flex",alignItems:"center",paddingLeft:16,zIndex:0,borderLeft:`3px solid ${cat.color}`}}><span style={{fontSize:20}}>▶</span></div>}
       {swiping&&swipeAction==="menu"&&<div style={{position:"absolute",inset:0,borderRadius:compact?12:14,background:"#E07A5F33",display:"flex",alignItems:"center",justifyContent:"flex-end",paddingRight:16,zIndex:0,borderLeft:`3px solid ${cat.color}`}}><span style={{fontSize:20}}>⋯</span></div>}
 
-      <div className={`task-card${isEdited?" edited":""}${isAppearing?" appearing":""}`}
+      <div className={`task-card${isAppearing?" appearing":""}`}
         style={{background:th.surface,borderRadius:compact?12:14,padding:compact?"11px 13px":"13px 14px",border:`1px solid ${overdue?"#E07A5F33":th.border}`,borderLeftWidth:3,borderLeftColor:overdue?"#E07A5F":cat.color,borderLeftStyle:"solid",opacity:task.done?0.45:1,position:"relative",zIndex:1,transform:`translateX(${swipeX}px)`,transition:swiping?"none":"transform 0.3s cubic-bezier(0.34,1.2,0.64,1)",touchAction:"pan-y"}}
         onTouchStart={onTS} onTouchMove={onTM} onTouchEnd={onTE}>
 
@@ -997,6 +1047,7 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isEd
               <div style={{fontSize:compact?13:14,fontWeight:500,textDecoration:task.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:task.done?th.textMuted:th.text,flex:1}}>{task.title}</div>
               {task.recur&&task.recur!=="none"&&<span style={{fontSize:9,color:th.textDim,background:th.surface2,borderRadius:3,padding:"1px 4px",flexShrink:0}}>↻</span>}
               {overdue&&<span style={{fontSize:9,color:"#E07A5F",background:"#E07A5F22",borderRadius:3,padding:"1px 4px",flexShrink:0,fontWeight:700}}>OVERDUE</span>}
+              {(()=>{ const d=taskAgeDays(task); const c=ageColor(d); return c&&!task.done?<span title={`${d} days old`} style={{fontSize:9,color:c,background:c+"22",borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:600}}>{d}d</span>:null; })()}
             </div>
             <div style={{display:"flex",gap:6,marginTop:compact?2:4,flexWrap:"wrap",alignItems:"center"}}>
               {full&&<span style={{fontSize:10,color:th.textDim,display:"flex",alignItems:"center",gap:2}}><span style={{width:5,height:5,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>{cat.label}</span>}
@@ -1086,7 +1137,7 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
   function testSound(id){ setSoundPlaying(id); playTimerSound(id); setTimeout(()=>setSoundPlaying(""),1200); }
   function testAnim(name){
     setAnimKey(k=>k+1); setAnimName(name);
-    const dur=name==="editPulse"?900:name==="wrapShrink"?500:600;
+    const dur=name==="wrapShrink"?500:600;
     setTimeout(()=>setAnimName(""),dur);
   }
   async function testNotif(){
@@ -1151,7 +1202,6 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
         <DevSection label="✨ Animations" th={th}>
           <style>{`
             @keyframes dev_slideIn  {0%{opacity:0;transform:translateY(18px) scale(0.96)}55%{opacity:1;transform:translateY(-2px) scale(1.005)}100%{opacity:1;transform:translateY(0) scale(1)}}
-            @keyframes dev_pulse    {0%{box-shadow:0 0 0 0 rgba(255,255,255,0.2)}40%{box-shadow:0 0 0 8px rgba(255,255,255,0.06)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
             @keyframes dev_shrink   {0%{max-height:80px;opacity:1;transform:scaleY(1)}40%{opacity:0}100%{max-height:0px;opacity:0;transform:scaleY(0)}}
             @keyframes dev_fadeIn   {from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}
             @keyframes dev_bounce   {0%{transform:scale(1)}30%{transform:scale(0.92)}60%{transform:scale(1.05)}100%{transform:scale(1)}}
@@ -1159,8 +1209,7 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
             {[
               {id:"slideIn", label:"Slide In",  anim:"dev_slideIn 0.5s cubic-bezier(0.34,1.28,0.64,1) forwards"},
-              {id:"pulse",   label:"Pulse",      anim:"dev_pulse 0.8s ease forwards"},
-              {id:"shrink",  label:"Card Exit",  anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
+  {id:"shrink",  label:"Card Exit",  anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
               {id:"fadeIn",  label:"Fade In",    anim:"dev_fadeIn 0.4s ease forwards"},
               {id:"bounce",  label:"Bounce",     anim:"dev_bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards"},
             ].map(a=>(
@@ -1179,7 +1228,6 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
                 animation:animName
                   ?[
                       {id:"slideIn", anim:"dev_slideIn 0.5s cubic-bezier(0.34,1.28,0.64,1) forwards"},
-                      {id:"pulse",   anim:"dev_pulse 0.8s ease forwards"},
                       {id:"shrink",  anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
                       {id:"fadeIn",  anim:"dev_fadeIn 0.4s ease forwards"},
                       {id:"bounce",  anim:"dev_bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards"},
@@ -1239,9 +1287,9 @@ function DevSection({label,children,th}){
 }
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
-function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th,streak,templates,notifGranted,onEnableNotifications,onResetStreak,onDeleteTemplate,onAddFromTemplate}){
+function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th,streak,templates,focusLog,notifGranted,onEnableNotifications,onResetStreak,onDeleteTemplate,onAddFromTemplate}){
   const[section,setSection]=useState("general");
-  const SECTIONS=[{id:"general",label:"General",icon:"⚙️"},{id:"display",label:"Display",icon:"🎨"},{id:"analytics",label:"Stats",icon:"📊"},{id:"templates",label:"Templates",icon:"📋"}];
+  const SECTIONS=[{id:"general",label:"General",icon:"⚙️"},{id:"display",label:"Display",icon:"🎨"},{id:"analytics",label:"Stats",icon:"📊"},{id:"history",label:"History",icon:"⏱"},{id:"templates",label:"Templates",icon:"📋"}];
   function Toggle({val,onChange}){ return(<div className="toggle-track" onClick={()=>onChange(!val)} style={{width:44,height:26,borderRadius:13,background:val?accent:th.border2,position:"relative",transition:"background 0.25s",flexShrink:0}}><div style={{position:"absolute",top:3,left:val?22:3,width:20,height:20,borderRadius:"50%",background:"#fff",transition:"left 0.25s cubic-bezier(0.34,1.56,0.64,1)",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/></div>); }
   function Row({icon,label,sub,right}){ return(<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"15px 16px",background:th.surface,borderRadius:14,marginBottom:8}}><div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:0}}><span style={{fontSize:18,width:24,textAlign:"center",flexShrink:0}}>{icon}</span><div style={{minWidth:0}}><div style={{fontSize:14,fontWeight:500}}>{label}</div>{sub&&<div style={{fontSize:11,color:th.textMuted,marginTop:2}}>{sub}</div>}</div></div><div style={{flexShrink:0,marginLeft:12}}>{right}</div></div>); }
   const hrs=Math.floor(analytics.totalMinutes/60), m2=analytics.totalMinutes%60;
@@ -1355,6 +1403,57 @@ function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th
             ))}
           </div>
           <div style={{marginTop:22,textAlign:"center",fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace",letterSpacing:1}}>TASKFLOW v4.0</div>
+        </>}
+
+        {section==="history"&&<>
+          <div style={{fontSize:11,color:th.textDim,letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Space Mono',monospace",marginBottom:14}}>Focus Session History</div>
+          {(!focusLog||focusLog.length===0)&&(
+            <div style={{textAlign:"center",color:th.textDim,padding:"48px 0",fontSize:14}}>
+              <div style={{fontSize:36,marginBottom:12}}>⏱</div>
+              <div>No sessions yet.</div>
+              <div style={{fontSize:12,marginTop:6}}>Complete a timer session to see your history here.</div>
+            </div>
+          )}
+          {focusLog&&focusLog.length>0&&(
+            <>
+              {/* Summary bar */}
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                {[
+                  {label:"Total Sessions",val:focusLog.length,icon:"🎯",color:accent},
+                  {label:"Total Focus",val:(()=>{ const m=focusLog.reduce((s,l)=>s+l.actualMins,0); return m>=60?`${Math.floor(m/60)}h ${m%60}m`:`${m}m`; })(),icon:"⏱",color:"#81B29A"},
+                ].map(s=>(
+                  <div key={s.label} style={{background:th.surface,borderRadius:14,padding:"14px",border:`1px solid ${th.border}`}}>
+                    <div style={{fontSize:18,marginBottom:6}}>{s.icon}</div>
+                    <div style={{fontFamily:"'Space Mono',monospace",fontSize:20,fontWeight:700,color:s.color}}>{s.val}</div>
+                    <div style={{fontSize:11,color:th.textMuted,marginTop:3}}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Session log */}
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {focusLog.slice(0,50).map(log=>{
+                  const cat=getCat(log.category,categories);
+                  const accuracy=log.estimatedMins>0?Math.round((log.actualMins/log.estimatedMins)*100):100;
+                  const accuracyColor=accuracy<=110?"#81B29A":accuracy<=130?"#F2CC8F":"#E07A5F";
+                  return(
+                    <div key={log.id} style={{background:th.surface,borderRadius:12,padding:"12px 14px",border:`1px solid ${th.border}`,borderLeft:`3px solid ${cat.color}`}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                        <div style={{fontSize:13,fontWeight:500,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:8}}>{log.taskTitle}</div>
+                        <div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace",flexShrink:0}}>{new Date(log.ts).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>
+                      </div>
+                      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                        <span style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:th.textDim}}><span style={{width:6,height:6,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>{cat.label}</span>
+                        <span style={{fontSize:10,color:th.textMuted}}>⏱ {log.actualMins}m actual</span>
+                        {log.estimatedMins!==log.actualMins&&<span style={{fontSize:10,color:th.textDim}}>({log.estimatedMins}m est)</span>}
+                        <span style={{fontSize:9,background:accuracyColor+"22",color:accuracyColor,borderRadius:3,padding:"2px 6px",fontWeight:600}}>{accuracy<=110?"On track":accuracy<=130?"A bit over":"Over"}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {focusLog.length>50&&<div style={{textAlign:"center",fontSize:11,color:th.textDim,marginTop:12}}>Showing 50 most recent of {focusLog.length} sessions</div>}
+            </>
+          )}
         </>}
 
         {section==="templates"&&<>
@@ -1495,35 +1594,50 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
 
           {/* Date — no min restriction */}
           <FF label="Date" th={th}>
-            <div style={{position:"relative"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
               <input type="date" value={form.date?new Date(form.date).toLocaleDateString("en-CA"):new Date().toISOString().split("T")[0]}
                 onChange={e=>{ if(!e.target.value)return; const d=new Date(e.target.value+"T12:00:00"); setForm(f=>({...f,date:d.toDateString()})); }}
-                style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"13px 44px 13px 14px",color:th.text,fontSize:14,colorScheme:cs}}/>
-              {form.date&&form.date!==todayStr()&&<button onClick={()=>setForm(f=>({...f,date:todayStr()}))} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:15,cursor:"pointer",padding:"4px",lineHeight:1}}>↩</button>}
+                style={{flex:1,background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"11px 12px",color:th.text,fontSize:13,colorScheme:cs,minWidth:0}}/>
+              {form.date&&form.date!==todayStr()&&(
+                <button onClick={()=>setForm(f=>({...f,date:todayStr()}))}
+                  style={{background:th.surface,border:`1px solid ${th.border}`,borderRadius:10,padding:"10px 12px",color:th.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",whiteSpace:"nowrap",flexShrink:0}}>
+                  Today ↩
+                </button>
+              )}
             </div>
           </FF>
 
-          {/* Work time + due time — stacked on mobile to avoid overflow */}
-          <FF label="🕐 Work Time" th={th}>
-            <div style={{position:"relative"}}>
-              <input type="time" value={form.workTime||""} onChange={e=>setForm(f=>({...f,workTime:e.target.value}))}
-                style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"13px 80px 13px 14px",color:"#7B9EC9",fontSize:14,colorScheme:cs}}/>
-              <div style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",display:"flex",gap:4}}>
-                {workTimePast&&<button onClick={()=>setForm(f=>({...f,workTime:nowTimeStr()}))} title="Update to now" style={{background:"#7B9EC922",border:"1px solid #7B9EC944",borderRadius:6,padding:"4px 8px",color:"#7B9EC9",fontSize:11,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,whiteSpace:"nowrap"}}>Now</button>}
-                {form.workTime&&<button onClick={()=>setForm(f=>({...f,workTime:""}))} style={{background:"none",border:"none",color:th.textDim,fontSize:14,cursor:"pointer",padding:"3px",lineHeight:1}}>✕</button>}
-              </div>
+          {/* Work time + Due time — side by side */}
+          <div style={{display:"flex",gap:12}}>
+            <div style={{flex:1,minWidth:0}}>
+              <FF label="🕐 Work Time" th={th}>
+                <div style={{display:"flex",gap:6,flexDirection:"column"}}>
+                  <div style={{position:"relative"}}>
+                    <input type="time" value={form.workTime||""} onChange={e=>setForm(f=>({...f,workTime:e.target.value}))}
+                      style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"11px 32px 11px 10px",color:"#7B9EC9",fontSize:13,colorScheme:cs,minWidth:0}}/>
+                    {form.workTime&&<button onClick={()=>setForm(f=>({...f,workTime:""}))} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:13,cursor:"pointer",padding:"2px",lineHeight:1}}>✕</button>}
+                  </div>
+                  {workTimePast&&(
+                    <button onClick={()=>setForm(f=>({...f,workTime:nowTimeStr()}))}
+                      style={{background:"#7B9EC922",border:"1px solid #7B9EC944",borderRadius:8,padding:"7px 10px",color:"#7B9EC9",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,textAlign:"center"}}>
+                      ⚠️ Update to Now
+                    </button>
+                  )}
+                </div>
+                <div style={{fontSize:10,color:th.textDim,marginTop:4}}>Start time</div>
+              </FF>
             </div>
-            <div style={{fontSize:10,color:th.textDim,marginTop:4}}>When you'll start · {workTimePast?"⚠️ past — tap Now to update":"tap Now if you're starting now"}</div>
-          </FF>
-
-          <FF label="⏰ Due Time" th={th}>
-            <div style={{position:"relative"}}>
-              <input type="time" value={form.dueTime||""} onChange={e=>setForm(f=>({...f,dueTime:e.target.value}))}
-                style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"13px 44px 13px 14px",color:"#E07A5F88",fontSize:14,colorScheme:cs}}/>
-              {form.dueTime&&<button onClick={()=>setForm(f=>({...f,dueTime:""}))} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:14,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>}
+            <div style={{flex:1,minWidth:0}}>
+              <FF label="⏰ Due Time" th={th}>
+                <div style={{position:"relative"}}>
+                  <input type="time" value={form.dueTime||""} onChange={e=>setForm(f=>({...f,dueTime:e.target.value}))}
+                    style={{width:"100%",background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"11px 32px 11px 10px",color:"#E07A5F88",fontSize:13,colorScheme:cs,minWidth:0}}/>
+                  {form.dueTime&&<button onClick={()=>setForm(f=>({...f,dueTime:""}))} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:13,cursor:"pointer",padding:"2px",lineHeight:1}}>✕</button>}
+                </div>
+                <div style={{fontSize:10,color:th.textDim,marginTop:4}}>Deadline</div>
+              </FF>
             </div>
-            <div style={{fontSize:10,color:th.textDim,marginTop:4}}>Hard deadline</div>
-          </FF>
+          </div>
 
           {/* Est finish */}
           <div style={{display:"flex",alignItems:"center",gap:10,background:th.surface,border:`1px solid ${th.border}`,borderRadius:12,padding:"13px 16px",marginBottom:20}}>
