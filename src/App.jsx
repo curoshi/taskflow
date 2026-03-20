@@ -1719,7 +1719,24 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
   const[finished,   setFinished]  =useState(false);
   const[showBurst,    setShowBurst]    =useState(false);
   const[localWorkTime,setLocalWorkTime]=useState(task.workTime||"");
-  const sessionStart=useRef(null);
+  const sessionStart  =useRef(null);
+  const wakeLockRef   =useRef(null);
+
+  // ── Wake Lock — keep screen on while timer is running ─────────────────────
+  useEffect(()=>{
+    async function acquireWakeLock(){
+      if(!("wakeLock" in navigator)) return;
+      try{
+        wakeLockRef.current=await navigator.wakeLock.request("screen");
+      }catch(e){}
+    }
+    function releaseWakeLock(){
+      if(wakeLockRef.current){ wakeLockRef.current.release().catch(()=>{}); wakeLockRef.current=null; }
+    }
+    if(running){ acquireWakeLock(); }
+    else { releaseWakeLock(); }
+    return()=>releaseWakeLock();
+  },[running]);
   const cat  = getCat(task.category,categories);
   const pct  = 1-remaining/totalSecs;
   const r=100, circ=2*Math.PI*r;
