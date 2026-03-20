@@ -515,6 +515,15 @@ export default function App(){
   if(timerTask) return(
     <TimerPage task={timerTask} categories={categories} accent={accent} timerSound={settings.timerSound} countdownMode={settings.countdownMode||"mm:ss"} th={th}
       onBack={()=>setTimerTask(null)}
+      onSavePartial={(actualMins)=>{
+        const id=timerTask.id;
+        const t=tasks.find(x=>x.id===id);
+        if(t){
+          setFocusLog(prev=>[{id:Date.now(),taskTitle:t.title,category:t.category,estimatedMins:t.minutes,actualMins,date:todayStr(),ts:Date.now(),partial:true},...prev].slice(0,200));
+          setTasks(prev=>prev.map(x=>x.id===id?{...x,actualMinutes:(x.actualMinutes||0)+actualMins}:x));
+        }
+        setTimerTask(null);
+      }}
       onDone={(actualMins)=>{
       const id=timerTask.id;
       const t=tasks.find(x=>x.id===id);
@@ -1710,7 +1719,7 @@ function FF({label,children,th}){
 }
 
 // ─── Timer Page ───────────────────────────────────────────────────────────────
-function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,onDone}){
+function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,onSavePartial,onDone}){
   const totalSecs = task.minutes*60;
   const[remaining,  setRemaining] =useState(totalSecs);
   const[running,    setRunning]   =useState(false);
@@ -1719,8 +1728,9 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
   const[finished,   setFinished]  =useState(false);
   const[showBurst,    setShowBurst]    =useState(false);
   const[localWorkTime,setLocalWorkTime]=useState(task.workTime||"");
-  const sessionStart  =useRef(null);
-  const wakeLockRef   =useRef(null);
+  const sessionStart    =useRef(null);
+  const wakeLockRef     =useRef(null);
+  const[showExitPrompt, setShowExitPrompt]=useState(false);
 
   // ── Wake Lock — keep screen on while timer is running ─────────────────────
   useEffect(()=>{
@@ -1903,7 +1913,7 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
         pointerEvents:focusLock&&running?"none":"auto",
         flexShrink:0,
       }}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:th.textDim,fontSize:15,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",padding:"8px"}}>← Back</button>
+        <button onClick={()=>{ if(elapsed>0) setShowExitPrompt(true); else onBack(); }} style={{background:"none",border:"none",color:th.textDim,fontSize:15,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",padding:"8px"}}>← Back</button>
         <button onClick={()=>setFocusLock(p=>!p)}
           style={{background:focusLock?th.surface:"none",border:`1px solid ${focusLock?cat.color+"44":th.border2}`,borderRadius:20,padding:"8px 16px",color:focusLock?cat.color:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:6,transition:"all 0.2s"}}>
           {focusLock?"🔒":"🔓"}{focusLock?" Focus On":" Focus Lock"}
@@ -2009,6 +2019,36 @@ function TimerPage({task,categories,accent,timerSound,countdownMode,th,onBack,on
           </button>
         )}
       </div>
+
+      {/* Exit prompt — shown when back is pressed and time has been spent */}
+      {showExitPrompt&&(
+        <div style={{position:"fixed",inset:0,zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.7)",backdropFilter:"blur(8px)"}}
+          onClick={()=>setShowExitPrompt(false)}>
+          <div onClick={e=>e.stopPropagation()}
+            style={{background:th.surface,borderRadius:22,padding:"28px 24px",width:"min(300px,88vw)",textAlign:"center",boxShadow:"0 24px 64px rgba(0,0,0,0.7)",border:`1px solid ${th.border2}`,animation:"fadeIn 0.2s ease"}}>
+            <div style={{fontSize:36,marginBottom:12}}>⏱</div>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:8}}>Save your progress?</div>
+            <div style={{fontSize:13,color:th.textMuted,marginBottom:8,lineHeight:1.6}}>
+              You've spent <span style={{color:cat.color,fontWeight:600}}>{fmtDuration(getActualMins())}</span> on this session.
+            </div>
+            <div style={{fontSize:12,color:th.textDim,marginBottom:24}}>Save it to your focus log or discard.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={()=>{ onDone(getActualMins()); }}
+                style={{background:cat.color,border:"none",borderRadius:12,padding:"14px",color:"#fff",fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,boxShadow:`0 4px 18px ${cat.color}55`}}>
+                ✓ Save {fmtDuration(getActualMins())} & mark complete
+              </button>
+              <button onClick={()=>{ onSavePartial(getActualMins()); }}
+                style={{background:th.surface2,border:`1px solid ${th.border2}`,borderRadius:12,padding:"14px",color:th.text,fontSize:14,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:500}}>
+                💾 Save time, keep task incomplete
+              </button>
+              <button onClick={onBack}
+                style={{background:"none",border:"none",color:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",padding:"6px"}}>
+                Discard & exit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
