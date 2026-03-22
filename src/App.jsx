@@ -23,12 +23,15 @@ const BASE_SORT_OPTIONS = [
   { id:"alpha",    label:"A → Z",     icon:"🔤" },
 ];
 const RECUR_OPTIONS = [
-  { id:"none",     label:"None" },
-  { id:"daily",    label:"Daily" },
-  { id:"weekdays", label:"Weekdays" },
-  { id:"weekly",   label:"Weekly" },
-  { id:"monthly",  label:"Monthly" },
+  { id:"none",     label:"None",          icon:"—"  },
+  { id:"daily",    label:"Daily",         icon:"☀️" },
+  { id:"weekdays", label:"Weekdays",      icon:"💼" },
+  { id:"weekends", label:"Weekends",      icon:"🌅" },
+  { id:"weekly",   label:"Weekly",        icon:"📅" },
+  { id:"monthly",  label:"Monthly",       icon:"🗓" },
+  { id:"custom",   label:"Custom days",   icon:"⚙️" },
 ];
+const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const AUDIO_OPTIONS = [
   { id:"none",    label:"None",       icon:"🔇" },
   { id:"chime",   label:"Chime",      icon:"🎵" },
@@ -98,12 +101,24 @@ function calcEstFinish(workTime,minutes){
 }
 function shouldRecurToday(task,dateStr){
   if(!task.recur||task.recur==="none") return false;
-  const d=new Date(dateStr), orig=new Date(task.date);
+  const d=new Date(dateStr), day=d.getDay(), orig=new Date(task.date);
   if(task.recur==="daily")    return true;
-  if(task.recur==="weekdays") { const day=d.getDay(); return day>=1&&day<=5; }
-  if(task.recur==="weekly")   return d.getDay()===orig.getDay();
+  if(task.recur==="weekdays") return day>=1&&day<=5;
+  if(task.recur==="weekends") return day===0||day===6;
+  if(task.recur==="weekly")   return day===orig.getDay();
   if(task.recur==="monthly")  return d.getDate()===orig.getDate();
+  if(task.recur==="custom")   return Array.isArray(task.recurDays)&&task.recurDays.includes(day);
   return false;
+}
+// Next date a task should recur after a given date
+function nextRecurDate(task, afterDateStr){
+  const start=new Date(afterDateStr);
+  const limit=task.recur==="monthly"?35:8; // monthly needs up to 31 days
+  for(let i=1;i<=limit;i++){
+    const d=new Date(start); d.setDate(start.getDate()+i);
+    if(shouldRecurToday(task,d.toDateString())) return d.toDateString();
+  }
+  return null;
 }
 function taskAgeDays(task){
   if(task.done||!task.createdAt) return 0;
@@ -293,7 +308,17 @@ export default function App(){
     return()=>clearInterval(id);
   },[loaded]);
 
+  // Reset summary gate on day change
+  useEffect(()=>{
+    if(!loaded) return;
+    const today=todayStr();
+    if(summaryShownFor.current&&summaryShownFor.current!==today){
+      summaryShownFor.current=null;
+    }
+  },[loaded]);
+
   function triggerRecur(){
+    if(!loaded) return; // don't run before initial storage load
     const today=todayStr();
     setTasks(prev=>{
       // Solidify recurStreak for completed old clones before removing them
@@ -363,15 +388,14 @@ export default function App(){
   },[loaded]);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
-  const todayAll    = useMemo(()=>tasks.filter(t=>t.date===todayStr()),[tasks]);
+  const todayAll    = useMemo(()=>tasks.filter(t=>t.date===todayStr()&&!(t.recur&&t.recur!=="none"&&!t.recurSourceId)),[tasks]);
   const todayDone   = useMemo(()=>todayAll.filter(t=>t.done),[todayAll]);
   const todayInc    = useMemo(()=>todayAll.filter(t=>!t.done),[todayAll]);
-  const tomorrowAll = useMemo(()=>tasks.filter(t=>t.date===tomorrowStr()),[tasks]);
+  const tomorrowAll = useMemo(()=>tasks.filter(t=>t.date===tomorrowStr()&&!(t.recur&&t.recur!=="none"&&!t.recurSourceId)),[tasks]);
   const overdueAll  = useMemo(()=>tasks.filter(t=>{
     if(t.done) return false;
-    if(new Date(t.date)>=new Date(todayStr())) return false; // not past
-    // Exclude recurring source tasks — they spawn clones, so they're not "missed work"
-    if(t.recur&&t.recur!=="none"&&!t.recurSourceId) return false;
+    if(new Date(t.date)>=new Date(todayStr())) return false;
+    if(t.recur&&t.recur!=="none") return false; // recurring tasks (source OR clone) never show as overdue — they regenerate
     return true;
   }),[tasks]);
   const progress    = todayAll.length>0?todayDone.length/todayAll.length:0;
@@ -387,11 +411,10 @@ export default function App(){
     if(allDoneToday){
       if(streakLastDate===today) return; // already counted today
       const isConsecutive=streakLastDate===yesterdayStr2;
-      const newStreak=isConsecutive?streak+1:1;
-      // Store exact previous state so rollback is perfect
+      // Use current state values (already available in effect closure since deps include tasks)
       setStreakPrev(streak);
       setStreakPrevDate(streakLastDate);
-      setStreak(newStreak);
+      setStreak(isConsecutive?streak+1:1);
       setStreakLastDate(today);
     } else {
       // Unchecked after all-done today — roll back to exact previous state
@@ -415,8 +438,12 @@ export default function App(){
     const today=todayStr();
     if(todayAll.length>0&&todayAll.every(t=>t.done)&&summaryShownFor.current!==today){
       summaryShownFor.current=today;
+      // Capture values synchronously before setTimeout
+      const doneFinal=todayDone.length;
+      const focusFinal=todayDone.reduce((s,t)=>s+(t.actualMinutes||t.minutes),0);
+      const streakFinal=streak;
       setTimeout(()=>{
-        setSummaryData({done:todayDone.length,totalFocus:todayDone.reduce((s,t)=>s+(t.actualMinutes||t.minutes),0),streak});
+        setSummaryData({done:doneFinal,totalFocus:focusFinal,streak:streakFinal});
         setShowSummary(true);
       },600);
     }
@@ -461,7 +488,7 @@ export default function App(){
 
   const homeList      = useMemo(()=>sortList(todayInc,settings.sortBy),[tasks,settings.sortBy]);
   const allUpcoming   = useMemo(()=>tasks.filter(t=>new Date(t.date)>=new Date(todayStr())).sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
-  const allWithOverdue= useMemo(()=>tasks.filter(t=>new Date(t.date)>=new Date(todayStr())).sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
+  const allWithOverdue= useMemo(()=>tasks.filter(t=>new Date(t.date)>=new Date(todayStr())&&!(t.recur&&t.recur!=="none"&&!t.recurSourceId)).sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
   const groupedByDate = useMemo(()=>{ const g={}; allWithOverdue.forEach(t=>{ if(!g[t.date])g[t.date]=[]; g[t.date].push(t); }); return g; },[allWithOverdue]);
   const sortedDates   = Object.keys(groupedByDate).sort((a,b)=>new Date(a)-new Date(b));
   const analytics     = useMemo(()=>{
@@ -484,7 +511,25 @@ export default function App(){
       haptic("success");
       setJustDone(id);
       setTimeout(()=>{
-        setTasks(prev=>prev.map(x=>x.id===id?{...x,done:true}:x));
+        setTasks(prev=>{
+          let next=prev.map(x=>x.id===id?{...x,done:true}:x);
+          // If recurring clone is being completed and it's from a past date,
+          // create the next occurrence so it doesn't get lost
+          if(t.recurSourceId&&t.date!==todayStr()){
+            const src=prev.find(x=>x.id===t.recurSourceId);
+            const base=src||t;
+            const nextDate=nextRecurDate(base,todayStr());
+            if(nextDate){
+              const alreadyExists=prev.some(x=>(x.recurSourceId===t.recurSourceId||x.id===t.recurSourceId)&&x.date===nextDate&&!x.done);
+              if(!alreadyExists){
+                next=[...next,{...base,id:Date.now()+Math.random(),date:nextDate,done:false,actualMinutes:0,
+                  recurSourceId:t.recurSourceId,createdAt:Date.now(),
+                  subtasks:(base.subtasks||[]).map(s=>({...s,done:false}))}];
+              }
+            }
+          }
+          return next;
+        });
         setJustDone(null);
       },360);
     } else {
@@ -500,8 +545,16 @@ export default function App(){
     if(!f.title.trim()) return;
     haptic("medium");
     if(taskForm.mode==="new"){
-      const newTask={...f,id:Date.now(),done:false,createdAt:Date.now(),actualMinutes:0,manualOrder:tasks.length};
-      setTasks(prev=>[...prev,newTask]);
+      const srcId=Date.now();
+      const src={...f,id:srcId,done:false,createdAt:Date.now(),actualMinutes:0,manualOrder:tasks.length};
+      const newTasks=[src];
+      // If recurring, immediately create a visible clone for today (source stays hidden)
+      if(f.recur&&f.recur!=="none"&&shouldRecurToday(f,todayStr())){
+        newTasks.push({...src,id:srcId+0.1,date:todayStr(),done:false,actualMinutes:0,
+          recurSourceId:srcId,createdAt:Date.now(),
+          subtasks:(f.subtasks||[]).map(s=>({...s,done:false}))});
+      }
+      setTasks(prev=>[...prev,...newTasks]);
     } else {
       setTasks(prev=>prev.map(x=>x.id===f.id?{...f}:x));
     }
@@ -513,6 +566,7 @@ export default function App(){
     if(!task) return;
     setDeleteConfirm(null); setActionMenu(null);
     setJustDeleted(id);
+    setExpandedNote(n=>n===id?null:n); // clear expanded note if it was this task
     // Cancel any existing undo timer
     if(undoDelete?.timerId) clearTimeout(undoDelete.timerId);
     // Slide-out animation plays, then actually remove after 4s (undo window)
@@ -817,18 +871,20 @@ export default function App(){
             {(() => {
               const q=listSearch.toLowerCase().trim();
               // Exclude overdue dates from the main list (they're shown above)
-              const overdueDateSet=new Set(overdueAll.map(t=>t.date));
+              const overdueIdSet=new Set(overdueAll.map(t=>t.id));
               const filteredDates=(q
                 ? sortedDates.filter(date=>groupedByDate[date].some(t=>
-                    t.title.toLowerCase().includes(q)||
-                    (t.notes||"").toLowerCase().includes(q)||
-                    getCat(t.category,categories).label.toLowerCase().includes(q)
+                    !overdueIdSet.has(t.id)&&(
+                      t.title.toLowerCase().includes(q)||
+                      (t.notes||"").toLowerCase().includes(q)||
+                      getCat(t.category,categories).label.toLowerCase().includes(q)
+                    )
                   ))
                 : sortedDates
-              ).filter(date=>!overdueDateSet.has(date)||q); // hide overdue dates unless searching
+              );
               if(q&&filteredDates.length===0&&overdueAll.length===0) return <div style={{textAlign:"center",color:th.textDim,marginTop:40,fontSize:14}}>No results for "{listSearch}"</div>;
               return filteredDates.map(date=>{
-                const dayTasks=groupedByDate[date];
+                const dayTasks=groupedByDate[date].filter(t=>!overdueIdSet.has(t.id));
                 const isToday=date===todayStr();
                 const q2=listSearch.toLowerCase().trim();
                 const inc=sortList(dayTasks.filter(t=>!t.done&&(!q2||t.title.toLowerCase().includes(q2)||(t.notes||"").toLowerCase().includes(q2)||getCat(t.category,categories).label.toLowerCase().includes(q2))),settings.sortBy);
@@ -873,7 +929,7 @@ export default function App(){
       {/* ══ Bottom Nav ══ */}
       <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:th.navBg,borderTop:`1px solid ${th.border}`,display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",alignItems:"end",padding:"0 0 20px",zIndex:50,backdropFilter:"blur(14px)",minHeight:64}}>
         {[{id:"home",icon:"⌂",label:"Home"},{id:"list",icon:"≡",label:"List"}].map(t=>(
-          <button key={t.id} className={`tab-btn ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)} style={{paddingTop:10,position:"relative"}}>
+          <button key={t.id} className={`tab-btn ${tab===t.id?"active":""}`} onClick={()=>{ setTab(t.id); if(t.id!=="list") setListSearch(""); }} style={{paddingTop:10,position:"relative"}}>
             <span className="tab-icon">{t.icon}</span>
             <span>{t.label}</span>
             {t.id==="list"&&overdueAll.length>0&&(
@@ -889,7 +945,7 @@ export default function App(){
             onMouseDown={e=>{e.currentTarget.style.transform="translateY(-10px) scale(0.92)";}}
             onMouseUp={e=>{e.currentTarget.style.transform="translateY(-12px) scale(1)";}}>+</button>
         </div>
-        <button className={`tab-btn ${tab==="settings"?"active":""}`} onClick={()=>setTab("settings")} style={{paddingTop:10}}>
+        <button className={`tab-btn ${tab==="settings"?"active":""}`} onClick={()=>{ setTab("settings"); setListSearch(""); }} style={{paddingTop:10}}>
           <span className="tab-icon">⚙</span><span>Settings</span>
         </button>
       </div>
@@ -917,8 +973,8 @@ export default function App(){
             </div>
             {[
               {icon:"✏️",label:"Edit Task",      sub:"Modify all details",       action:()=>{ setTaskForm({mode:"edit",task:{...actionMenu}}); setActionMenu(null); }, color:th.text},
-              ...(actionMenu.date!==todayStr()?[{icon:"📥",label:"Move to Today", sub:"Pull into today's list",   action:()=>moveToToday(actionMenu.id),                                              color:accent}]:[]),
-              ...(actionMenu.date===todayStr()?[{icon:"📅",label:"Postpone",      sub:"Move to tomorrow",         action:()=>postponeTask(actionMenu.id),                                             color:"#7B9EC9"}]:[]),
+              ...(actionMenu.date!==todayStr()&&!actionMenu.recurSourceId?[{icon:"📥",label:"Move to Today", sub:"Pull into today's list",   action:()=>moveToToday(actionMenu.id), color:accent}]:[]),
+              ...(actionMenu.date===todayStr()&&!actionMenu.recurSourceId?[{icon:"📅",label:"Postpone",      sub:"Move to tomorrow",         action:()=>postponeTask(actionMenu.id), color:"#7B9EC9"}]:[]),
               {icon:"📋",label:"Save as Template",sub:"Reuse this task config",   action:()=>{ saveTemplate(actionMenu); setActionMenu(null); },                      color:"#81B29A"},
               {icon:"🗑️",label:"Delete Task",    sub:"This can't be undone",     action:()=>setDeleteConfirm(actionMenu.id),                                         color:"#E07A5F"},
             ].map(item=>(
@@ -980,7 +1036,7 @@ export default function App(){
       {/* ══ Dev Menu ══ */}
       {showDevMenu&&<DevMenu accent={accent} th={th} onClose={()=>setShowDevMenu(false)}
         onResetOnboarding={()=>{ try{localStorage.removeItem('tf_onboarding_seen');}catch(e){} setShowDevMenu(false); setShowOnboarding(true); }}
-        onResetStorage={()=>{ try{['tf_tasks','tf_categories','tf_settings','tf_streak','tf_templates','tf_onboarding_seen'].forEach(k=>localStorage.removeItem(k));}catch(e){} window.location.reload(); }}
+        onResetStorage={()=>{ if(undoDelete?.timerId) clearTimeout(undoDelete.timerId); try{['tf_tasks','tf_categories','tf_settings','tf_streak','tf_templates','tf_onboarding_seen','tf_focuslog'].forEach(k=>localStorage.removeItem(k));}catch(e){} window.location.reload(); }}
         onForceOverdue={()=>{ setTasks(prev=>prev.map((t,i)=>i===0?{...t,date:yesterdayStr(),done:false}:t)); setShowDevMenu(false); }}
         onForceSummary={()=>{ setSummaryData({done:5,totalFocus:120,streak:streak||3}); setShowSummary(true); setShowDevMenu(false); }}
         onAddTestTask={()=>{ setTasks(prev=>[...prev,{id:Date.now(),title:"Test task "+Date.now()%1000,category:"work",priority:"high",minutes:30,workTime:"",dueTime:"",notes:"Added from dev menu",done:false,date:todayStr(),createdAt:Date.now(),recur:"none",subtasks:[],manualOrder:prev.length,actualMinutes:0}]); setShowDevMenu(false); }}
@@ -1250,7 +1306,12 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAp
                 );
               })()}
               {overdue&&<span style={{fontSize:9,color:"#E07A5F",background:"#E07A5F22",borderRadius:3,padding:"1px 4px",flexShrink:0,fontWeight:700}}>OVERDUE</span>}
-              {(()=>{ const d=taskAgeDays(task); const c=ageColor(d); return c&&!task.done?<span title={`${d} days old`} style={{fontSize:9,color:c,background:c+"22",borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:600}}>{d}d</span>:null; })()}
+              {(()=>{
+                // Don't show age badge on recurring clones — they're freshly created each day
+                if(task.recurSourceId) return null;
+                const d=taskAgeDays(task); const c=ageColor(d);
+                return c&&!task.done?<span title={`${d} days old`} style={{fontSize:9,color:c,background:c+"22",borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:600}}>{d}d</span>:null;
+              })()}
             </div>
             <div style={{display:"flex",gap:6,marginTop:compact?2:4,flexWrap:"wrap",alignItems:"center"}}>
               {full&&<span style={{fontSize:10,color:th.textDim,display:"flex",alignItems:"center",gap:2}}><span style={{width:5,height:5,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>{cat.label}</span>}
@@ -1328,154 +1389,132 @@ function DevMenu({accent,th,onClose,onResetOnboarding,onResetStorage,onForceOver
   const[hapticResult,setHapticResult]=useState("");
   const[soundPlaying,setSoundPlaying]=useState("");
   const[animKey,setAnimKey]=useState(0);
-  const[animName,setAnimName]=useState("");
-  const[notifStatus,setNotifStatus]=useState(typeof Notification!=="undefined"?Notification.permission:"unavailable");
+  const[animId,setAnimId]=useState("");
+  const[notifStatus,setNotifStatus]=useState(
+    typeof Notification!=="undefined"?Notification.permission:"unavailable"
+  );
+
+  const ANIMS=[
+    {id:"slideIn",label:"Slide In", anim:"dev_slideIn 0.5s cubic-bezier(0.34,1.28,0.64,1) forwards"},
+    {id:"shrink", label:"Card Exit",anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
+    {id:"fadeIn", label:"Fade In",  anim:"dev_fadeIn 0.4s ease forwards"},
+    {id:"bounce", label:"Bounce",   anim:"dev_bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards"},
+  ];
 
   function testHaptic(type){
-    const supported="vibrate" in navigator;
-    if(supported){ haptic(type); setHapticResult(`✓ "${type}" vibration sent`); }
-    else { setHapticResult(`✗ Vibration API not supported on this browser/device. Works on Android Chrome & Firefox. iOS Safari blocks it.`); }
-    setTimeout(()=>setHapticResult(""),3000);
+    if("vibrate" in navigator){
+      haptic(type);
+      setHapticResult("✓ "+type);
+    } else {
+      setHapticResult("✗ Not supported (works on Android Chrome)");
+    }
+    setTimeout(()=>setHapticResult(""),2500);
   }
-  function testSound(id){ setSoundPlaying(id); playTimerSound(id); setTimeout(()=>setSoundPlaying(""),1200); }
-  function testAnim(name){
-    setAnimKey(k=>k+1); setAnimName(name);
-    const dur=name==="wrapShrink"?500:600;
-    setTimeout(()=>setAnimName(""),dur);
+  function testSound(id){ setSoundPlaying(id); playTimerSound(id); setTimeout(()=>setSoundPlaying(""),1500); }
+  function testAnim(id){
+    setAnimId(id); setAnimKey(k=>k+1);
+    setTimeout(()=>setAnimId(""),700);
   }
   async function testNotif(){
     if(typeof Notification==="undefined"){ setNotifStatus("unavailable"); return; }
-    const perm=await Notification.requestPermission();
-    setNotifStatus(perm);
-    if(perm==="granted") new Notification("TaskFlow",{body:"Notifications are working! 🎉"});
+    const p=await Notification.requestPermission();
+    setNotifStatus(p);
+    if(p==="granted") new Notification("TaskFlow",{body:"Notifications working! 🎉"});
   }
 
   return(
     <div style={{position:"fixed",inset:0,zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
       <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.75)",backdropFilter:"blur(8px)"}}/>
       <div onClick={e=>e.stopPropagation()} style={{position:"relative",background:th.surface2,borderRadius:"22px 22px 0 0",width:"100%",maxWidth:430,padding:"16px 20px 52px",maxHeight:"92vh",overflowY:"auto",overflowX:"hidden",animation:"slideUp 0.3s cubic-bezier(0.34,1.08,0.64,1)",boxShadow:"0 -8px 40px rgba(0,0,0,0.6)"}}>
+        <style>{`
+          @keyframes dev_slideIn{0%{opacity:0;transform:translateY(18px) scale(0.96)}60%{opacity:1;transform:translateY(-2px)}100%{opacity:1;transform:translateY(0) scale(1)}}
+          @keyframes dev_shrink{0%{opacity:1;transform:scaleY(1)}40%{opacity:0}100%{opacity:0;transform:scaleY(0)}}
+          @keyframes dev_fadeIn{from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}
+          @keyframes dev_bounce{0%{transform:scale(1)}30%{transform:scale(0.9)}60%{transform:scale(1.08)}100%{transform:scale(1)}}
+        `}</style>
         <div style={{width:36,height:4,background:th.border2,borderRadius:2,margin:"0 auto 16px"}}/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
           <div>
             <div style={{fontSize:16,fontWeight:700}}>🛠 Dev Menu</div>
-            <div style={{fontSize:12,color:th.textMuted,marginTop:2}}>Testing tools — only shows in dev</div>
+            <div style={{fontSize:12,color:th.textMuted,marginTop:2}}>Testing tools</div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:th.textMuted,fontSize:20,cursor:"pointer",padding:"4px"}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:th.textMuted,fontSize:22,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>
         </div>
 
-        {/* Sounds */}
-        <DevSection label="🔊 Timer Sounds" th={th}>
+        <DevSection label="🔊 Sounds" th={th}>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {AUDIO_OPTIONS.filter(a=>a.id!=="none").map(a=>(
               <button key={a.id} onClick={()=>testSound(a.id)}
-                style={{background:soundPlaying===a.id?accent+"22":th.surface,border:`1px solid ${soundPlaying===a.id?accent:th.border2}`,borderRadius:12,padding:"12px 14px",color:soundPlaying===a.id?accent:th.text,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:8,transition:"all 0.2s"}}>
-                <span style={{fontSize:16}}>{a.icon}</span><span>{a.label}</span>
+                style={{background:soundPlaying===a.id?accent+"22":th.surface,border:`1px solid ${soundPlaying===a.id?accent:th.border2}`,borderRadius:12,padding:"11px 12px",color:soundPlaying===a.id?accent:th.text,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:15}}>{a.icon}</span><span>{a.label}</span>
               </button>
             ))}
           </div>
         </DevSection>
 
-        {/* Haptics */}
-        <DevSection label="📳 Haptic Feedback" th={th}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:10}}>
-            {["light","medium","heavy","success","error","double","triple"].map(h=>(
+        <DevSection label="📳 Haptics" th={th}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
+            {["light","medium","heavy","success","error","double"].map(h=>(
               <button key={h} onClick={()=>testHaptic(h)}
-                style={{background:th.surface,border:`1px solid ${th.border2}`,borderRadius:12,padding:"12px 8px",color:th.text,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",textTransform:"capitalize"}}>
+                style={{background:th.surface,border:`1px solid ${th.border2}`,borderRadius:12,padding:"11px 6px",color:th.text,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",textTransform:"capitalize",textAlign:"center"}}>
                 {h}
               </button>
             ))}
           </div>
-          {hapticResult&&<div style={{fontSize:12,color:hapticResult.startsWith("✓")?"#81B29A":"#E07A5F",fontFamily:"'Space Mono',monospace",lineHeight:1.5,marginTop:4}}>{hapticResult}</div>}
+          {hapticResult&&<div style={{fontSize:12,padding:"8px 12px",background:hapticResult.startsWith("✓")?"#81B29A22":"#E07A5F22",borderRadius:8,color:hapticResult.startsWith("✓")?"#81B29A":"#E07A5F",fontFamily:"'Space Mono',monospace"}}>{hapticResult}</div>}
         </DevSection>
 
-        {/* Notifications */}
         <DevSection label="🔔 Notifications" th={th}>
-          <div style={{background:th.surface,borderRadius:12,padding:"14px 16px",marginBottom:10,border:`1px solid ${th.border}`}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:500}}>Permission: <span style={{color:notifStatus==="granted"?"#81B29A":notifStatus==="denied"?"#E07A5F":"#F2CC8F"}}>{notifStatus}</span></div>
-                <div style={{fontSize:11,color:th.textMuted,marginTop:3}}>Works in Chrome, Edge, Firefox. Not on iOS Safari.</div>
-              </div>
-              <button onClick={testNotif} style={{background:accent+"22",border:`1px solid ${accent}44`,borderRadius:8,padding:"8px 14px",color:accent,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,flexShrink:0,marginLeft:12}}>Test</button>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:th.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${th.border}`}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:500}}>Permission: <span style={{color:notifStatus==="granted"?"#81B29A":notifStatus==="denied"?"#E07A5F":"#F2CC8F"}}>{notifStatus}</span></div>
+              <div style={{fontSize:11,color:th.textMuted,marginTop:3}}>Chrome/Edge/Firefox only (not iOS Safari)</div>
             </div>
+            <button onClick={testNotif} style={{background:accent+"22",border:`1px solid ${accent}44`,borderRadius:8,padding:"8px 14px",color:accent,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600,flexShrink:0,marginLeft:12}}>Test</button>
           </div>
         </DevSection>
 
-        {/* Animations */}
         <DevSection label="✨ Animations" th={th}>
-          <style>{`
-            @keyframes dev_slideIn  {0%{opacity:0;transform:translateY(18px) scale(0.96)}55%{opacity:1;transform:translateY(-2px) scale(1.005)}100%{opacity:1;transform:translateY(0) scale(1)}}
-            @keyframes dev_shrink   {0%{max-height:80px;opacity:1;transform:scaleY(1)}40%{opacity:0}100%{max-height:0px;opacity:0;transform:scaleY(0)}}
-            @keyframes dev_fadeIn   {from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}
-            @keyframes dev_bounce   {0%{transform:scale(1)}30%{transform:scale(0.92)}60%{transform:scale(1.05)}100%{transform:scale(1)}}
-          `}</style>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-            {[
-              {id:"slideIn", label:"Slide In",  anim:"dev_slideIn 0.5s cubic-bezier(0.34,1.28,0.64,1) forwards"},
-  {id:"shrink",  label:"Card Exit",  anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
-              {id:"fadeIn",  label:"Fade In",    anim:"dev_fadeIn 0.4s ease forwards"},
-              {id:"bounce",  label:"Bounce",     anim:"dev_bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards"},
-            ].map(a=>(
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:12}}>
+            {ANIMS.map(a=>(
               <button key={a.id} onClick={()=>testAnim(a.id)}
-                style={{background:animName===a.id?accent+"22":th.surface,border:`1px solid ${animName===a.id?accent:th.border2}`,borderRadius:12,padding:"12px 8px",color:animName===a.id?accent:th.text,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",transition:"all 0.2s",textAlign:"center"}}>
+                style={{background:animId===a.id?accent+"22":th.surface,border:`1px solid ${animId===a.id?accent:th.border2}`,borderRadius:12,padding:"11px 4px",color:animId===a.id?accent:th.text,fontSize:11,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",textAlign:"center"}}>
                 {a.label}
               </button>
             ))}
           </div>
-          {/* Preview card — uses inline animation so it always works */}
           <div style={{overflow:"hidden",borderRadius:12}}>
-            <div key={animKey}
-              style={{
-                background:th.surface,borderRadius:12,padding:"13px 16px",
-                border:`1px solid ${th.border}`,borderLeft:`3px solid ${accent}`,
-                animation:animName
-                  ?[
-                      {id:"slideIn", anim:"dev_slideIn 0.5s cubic-bezier(0.34,1.28,0.64,1) forwards"},
-                      {id:"shrink",  anim:"dev_shrink 0.45s cubic-bezier(0.55,0,0.1,1) forwards"},
-                      {id:"fadeIn",  anim:"dev_fadeIn 0.4s ease forwards"},
-                      {id:"bounce",  anim:"dev_bounce 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards"},
-                    ].find(a=>a.id===animName)?.anim||"none"
-                  :"none",
-              }}>
+            <div key={animKey} style={{background:th.surface,borderRadius:12,padding:"13px 16px",border:`1px solid ${th.border}`,borderLeft:`3px solid ${accent}`,animation:animId?(ANIMS.find(a=>a.id===animId)?.anim||"none"):"none"}}>
               <div style={{fontWeight:500,fontSize:13,color:th.text}}>Sample Task</div>
-              <div style={{fontSize:11,color:th.textMuted,marginTop:4,display:"flex",gap:8,alignItems:"center"}}>
-                <span>🕐 3:00 PM</span>
-                <span>⏱ 30m</span>
-                <span style={{background:accent+"1A",color:accent,borderRadius:3,padding:"1px 6px",fontSize:9,fontWeight:700}}>High</span>
-              </div>
+              <div style={{fontSize:11,color:th.textMuted,marginTop:4}}>🕐 3:00 PM · ⏱ 30m</div>
             </div>
           </div>
-          {animName&&<div style={{marginTop:8,fontSize:11,color:th.textMuted,fontFamily:"'Space Mono',monospace"}}>▶ playing: {animName}</div>}
         </DevSection>
 
-        {/* App State Triggers */}
-        <DevSection label="⚡ App State Triggers" th={th}>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {[
-              {label:"Add test task",          sub:"Adds a task to today",              fn:onAddTestTask,      color:"#7B9EC9"},
-              {label:"Add recurring test task",sub:"Daily task to test recur count",   fn:onAddTestRecur,     color:"#7B9EC9"},
-              {label:"Solidify recur counts",  sub:"Runs next-day logic right now",    fn:onSolidifyRecur,    color:"#C9A7EB"},
-              {label:"Show onboarding again",  sub:"Resets the seen flag",              fn:onResetOnboarding,  color:"#81B29A"},
-              {label:"Force overdue task",     sub:"Makes first task overdue",          fn:onForceOverdue,     color:"#F2CC8F"},
-              {label:"Show daily summary",     sub:"Fires the completion modal",        fn:onForceSummary,     color:"#C9A7EB"},
-              {label:"⚠️ Reset ALL storage",  sub:"Wipes everything & reloads",        fn:onResetStorage,     color:"#E07A5F"},
-            ].map(item=>(
-              <button key={item.label} onClick={item.fn}
-                style={{background:item.color+"14",border:`1px solid ${item.color}33`,borderRadius:12,padding:"13px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'DM Sans',sans-serif",width:"100%"}}>
-                <div style={{fontSize:13,fontWeight:600,color:item.color}}>{item.label}</div>
-                <div style={{fontSize:11,color:th.textMuted,marginTop:2}}>{item.sub}</div>
-              </button>
-            ))}
-          </div>
+        <DevSection label="⚡ App Triggers" th={th}>
+          {[
+            {label:"Add test task",         sub:"Plain task for today",           fn:onAddTestTask,    color:"#7B9EC9"},
+            {label:"Add recurring task",    sub:"Daily recurring test",           fn:onAddTestRecur,   color:"#7B9EC9"},
+            {label:"Solidify recur counts", sub:"Runs next-day logic now",        fn:onSolidifyRecur,  color:"#C9A7EB"},
+            {label:"Show onboarding",       sub:"Resets first-run flow",          fn:onResetOnboarding,color:"#81B29A"},
+            {label:"Force overdue",         sub:"Makes first task overdue",       fn:onForceOverdue,   color:"#F2CC8F"},
+            {label:"Show summary",          sub:"Fires completion modal",         fn:onForceSummary,   color:"#C9A7EB"},
+            {label:"⚠️ Reset ALL storage", sub:"Wipes everything & reloads",     fn:onResetStorage,   color:"#E07A5F"},
+          ].map(item=>(
+            <button key={item.label} onClick={item.fn}
+              style={{width:"100%",background:item.color+"14",border:`1px solid ${item.color}33`,borderRadius:12,padding:"12px 16px",cursor:"pointer",textAlign:"left",fontFamily:"'DM Sans',sans-serif",marginBottom:8}}>
+              <div style={{fontSize:13,fontWeight:600,color:item.color}}>{item.label}</div>
+              <div style={{fontSize:11,color:th.textMuted,marginTop:2}}>{item.sub}</div>
+            </button>
+          ))}
         </DevSection>
 
-        {/* System info */}
         <DevSection label="📱 System Info" th={th}>
-          <div style={{background:th.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${th.border}`,fontFamily:"'Space Mono',monospace",fontSize:11,color:th.textMuted,lineHeight:1.8}}>
-            <div>Vibration API: <span style={{color:"vibrate" in navigator?"#81B29A":"#E07A5F"}}>{"vibrate" in navigator?"supported":"not supported"}</span></div>
-            <div>Notifications: <span style={{color:typeof Notification!=="undefined"?"#81B29A":"#E07A5F"}}>{typeof Notification!=="undefined"?"available":"not available"}</span></div>
-            <div>Platform: <span style={{color:th.text}}>{navigator.platform||"unknown"}</span></div>
-            <div>Screen: <span style={{color:th.text}}>{window.innerWidth}×{window.innerHeight}</span></div>
+          <div style={{background:th.surface,borderRadius:12,padding:"14px 16px",border:`1px solid ${th.border}`,fontFamily:"'Space Mono',monospace",fontSize:11,color:th.textMuted,lineHeight:1.9}}>
+            <div>Vibration: <span style={{color:"vibrate" in navigator?"#81B29A":"#E07A5F"}}>{"vibrate" in navigator?"✓ supported":"✗ not supported"}</span></div>
+            <div>Notifications: <span style={{color:typeof Notification!=="undefined"?"#81B29A":"#E07A5F"}}>{typeof Notification!=="undefined"?"✓ available":"✗ not available"}</span></div>
+            <div>Wake Lock: <span style={{color:"wakeLock" in navigator?"#81B29A":"#E07A5F"}}>{"wakeLock" in navigator?"✓ supported":"✗ not supported"}</span></div>
+            <div>Screen: <span style={{color:th.text}}>{typeof window!=="undefined"?`${window.innerWidth}×${window.innerHeight}`:"?"}</span></div>
           </div>
         </DevSection>
       </div>
@@ -1651,7 +1690,8 @@ function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th
                         <span style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:th.textDim}}><span style={{width:6,height:6,borderRadius:"50%",background:cat.color,display:"inline-block"}}/>{cat.label}</span>
                         <span style={{fontSize:10,color:th.textMuted}}>⏱ {log.actualMins}m actual</span>
                         {log.estimatedMins!==log.actualMins&&<span style={{fontSize:10,color:th.textDim}}>({log.estimatedMins}m est)</span>}
-                        <span style={{fontSize:9,background:accuracyColor+"22",color:accuracyColor,borderRadius:3,padding:"2px 6px",fontWeight:600}}>{accuracy<=110?"On track":accuracy<=130?"A bit over":"Over"}</span>
+                        {log.partial&&<span style={{fontSize:9,background:"#7B9EC922",color:"#7B9EC9",borderRadius:3,padding:"2px 6px",fontWeight:600}}>Partial</span>}
+                      {!log.partial&&<span style={{fontSize:9,background:accuracyColor+"22",color:accuracyColor,borderRadius:3,padding:"2px 6px",fontWeight:600}}>{accuracy<=110?"On track":accuracy<=130?"A bit over":"Over"}</span>}
                       </div>
                     </div>
                   );
@@ -1775,12 +1815,33 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
           </FF>
 
           <FF label="Recurring" th={th}>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:form.recur&&form.recur!=="none"&&mode==="edit"?8:0}}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
               {RECUR_OPTIONS.map(r=>(
-                <button key={r.id} onClick={()=>setForm(f=>({...f,recur:r.id}))}
-                  style={{background:(form.recur||"none")===r.id?accent+"25":th.surface,border:`1.5px solid ${(form.recur||"none")===r.id?accent:th.border}`,borderRadius:10,padding:"8px 13px",color:(form.recur||"none")===r.id?accent:th.textMuted,fontSize:13,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:500,transition:"all 0.15s"}}>{r.label}</button>
+                <button key={r.id} onClick={()=>setForm(f=>({...f,recur:r.id,recurDays:r.id==="custom"?(f.recurDays||[1,2,3,4,5]):f.recurDays}))}
+                  style={{background:(form.recur||"none")===r.id?accent+"25":th.surface,border:`1.5px solid ${(form.recur||"none")===r.id?accent:th.border}`,borderRadius:10,padding:"8px 12px",color:(form.recur||"none")===r.id?accent:th.textMuted,fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:500,transition:"all 0.15s",display:"flex",alignItems:"center",gap:5}}>
+                  <span>{r.icon}</span><span>{r.label}</span>
+                </button>
               ))}
             </div>
+            {(form.recur||"none")==="custom"&&(
+              <div style={{background:th.surface,borderRadius:12,padding:"12px 14px",border:`1px solid ${th.border}`,marginBottom:4}}>
+                <div style={{fontSize:11,color:th.textDim,marginBottom:8}}>Select days:</div>
+                <div style={{display:"flex",gap:6}}>
+                  {DAY_LABELS.map((label,i)=>{
+                    const active=(form.recurDays||[]).includes(i);
+                    return(
+                      <button key={i} onClick={()=>setForm(f=>{
+                        const days=f.recurDays||[1,2,3,4,5];
+                        return{...f,recurDays:active?days.filter(d=>d!==i):[...days,i].sort()};
+                      })}
+                        style={{flex:1,background:active?accent+"25":th.bg,border:`1.5px solid ${active?accent:th.border}`,borderRadius:8,padding:"8px 0",color:active?accent:th.textDim,fontSize:11,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:active?700:400,transition:"all 0.15s",textAlign:"center"}}>
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             {form.recur&&form.recur!=="none"&&mode==="edit"&&(
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:th.surface,borderRadius:10,padding:"10px 14px",border:`1px solid ${th.border}`}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
