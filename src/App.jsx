@@ -229,6 +229,7 @@ export default function App(){
   const[deleteConfirm,  setDeleteConfirm] =useState(null);
   const[justDone,       setJustDone]      =useState(null);
   const[justDeleted,    setJustDeleted]   =useState(null);
+  const[undoDelete,     setUndoDelete]    =useState(null); // {task, timerId}
   const[justAppeared,   setJustAppeared]  =useState(null);
   const[streak,         setStreak]        =useState(0);
   const[streakLastDate, setStreakLastDate]=useState(null);
@@ -366,7 +367,13 @@ export default function App(){
   const todayDone   = useMemo(()=>todayAll.filter(t=>t.done),[todayAll]);
   const todayInc    = useMemo(()=>todayAll.filter(t=>!t.done),[todayAll]);
   const tomorrowAll = useMemo(()=>tasks.filter(t=>t.date===tomorrowStr()),[tasks]);
-  const overdueAll  = useMemo(()=>tasks.filter(t=>t.date===yesterdayStr()&&!t.done),[tasks]);
+  const overdueAll  = useMemo(()=>tasks.filter(t=>{
+    if(t.done) return false;
+    if(new Date(t.date)>=new Date(todayStr())) return false; // not past
+    // Exclude recurring source tasks — they spawn clones, so they're not "missed work"
+    if(t.recur&&t.recur!=="none"&&!t.recurSourceId) return false;
+    return true;
+  }),[tasks]);
   const progress    = todayAll.length>0?todayDone.length/todayAll.length:0;
 
   // ── Streak ──────────────────────────────────────────────────────────────────
@@ -454,7 +461,7 @@ export default function App(){
 
   const homeList      = useMemo(()=>sortList(todayInc,settings.sortBy),[tasks,settings.sortBy]);
   const allUpcoming   = useMemo(()=>tasks.filter(t=>new Date(t.date)>=new Date(todayStr())).sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
-  const allWithOverdue= useMemo(()=>[...tasks.filter(t=>t.date===yesterdayStr()&&!t.done),...tasks.filter(t=>new Date(t.date)>=new Date(todayStr()))].sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
+  const allWithOverdue= useMemo(()=>tasks.filter(t=>new Date(t.date)>=new Date(todayStr())).sort((a,b)=>new Date(a.date)-new Date(b.date)||PRIORITY_ORDER[a.priority]-PRIORITY_ORDER[b.priority]),[tasks]);
   const groupedByDate = useMemo(()=>{ const g={}; allWithOverdue.forEach(t=>{ if(!g[t.date])g[t.date]=[]; g[t.date].push(t); }); return g; },[allWithOverdue]);
   const sortedDates   = Object.keys(groupedByDate).sort((a,b)=>new Date(a)-new Date(b));
   const analytics     = useMemo(()=>{
@@ -501,13 +508,41 @@ export default function App(){
     setTaskForm(null);
   }
   function deleteTask(id){
-    haptic("error"); setDeleteConfirm(null); setActionMenu(null);
+    haptic("error");
+    const task=tasks.find(t=>t.id===id);
+    if(!task) return;
+    setDeleteConfirm(null); setActionMenu(null);
     setJustDeleted(id);
-    setTimeout(()=>{ setTasks(prev=>prev.filter(t=>t.id!==id)); setJustDeleted(null); },420);
+    // Cancel any existing undo timer
+    if(undoDelete?.timerId) clearTimeout(undoDelete.timerId);
+    // Slide-out animation plays, then actually remove after 4s (undo window)
+    setTimeout(()=>setJustDeleted(null),420);
+    const timerId=setTimeout(()=>{
+      setTasks(prev=>prev.filter(t=>t.id!==id));
+      setUndoDelete(null);
+    },4000);
+    setUndoDelete({task,timerId});
+  }
+  function undoDeleteTask(){
+    if(!undoDelete) return;
+    clearTimeout(undoDelete.timerId);
+    // Task is still in state (we only remove after 4s), so just clear the undo
+    setUndoDelete(null);
+    haptic("success");
   }
   function moveToToday(id){
     haptic("medium");
-    setTasks(prev=>prev.map(t=>t.id===id?{...t,date:todayStr()}:t));
+    const today=todayStr();
+    setTasks(prev=>{
+      const t=prev.find(x=>x.id===id); if(!t) return prev;
+      const alreadyToday=prev.some(x=>x.date===today&&x.title.trim().toLowerCase()===t.title.trim().toLowerCase()&&x.id!==id);
+      if(alreadyToday){
+        // A copy already exists today — just delete the overdue one
+        return prev.filter(x=>x.id!==id);
+      }
+      // Remove old, add fresh today copy
+      return [...prev.filter(x=>x.id!==id),{...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}];
+    });
     setActionMenu(null);
   }
   function postponeTask(id){
@@ -517,7 +552,18 @@ export default function App(){
   }
   function moveOverdueToToday(){
     haptic("success");
-    setTasks(prev=>prev.map(t=>t.date===yesterdayStr()&&!t.done?{...t,date:todayStr()}:t));
+    const today=todayStr();
+    setTasks(prev=>{
+      const todayTaskTitles=new Set(prev.filter(t=>t.date===today).map(t=>t.title.trim().toLowerCase()));
+      const overdue=prev.filter(t=>!t.done&&new Date(t.date)<new Date(today)&&!(t.recur&&t.recur!=="none"&&!t.recurSourceId));
+      // Remove all overdue tasks
+      let next=prev.filter(t=>!overdue.find(o=>o.id===t.id));
+      // Add fresh today copies only if no task with same title already exists today
+      const toAdd=overdue
+        .filter(t=>!todayTaskTitles.has(t.title.trim().toLowerCase()))
+        .map(t=>({...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}));
+      return [...next,...toAdd];
+    });
   }
   function deleteCategory(catId){
     setTasks(prev=>prev.map(t=>t.category===catId?{...t,category:"other"}:t));
@@ -660,16 +706,7 @@ export default function App(){
               </div>
             </div>
 
-            {/* Overdue banner */}
-            {overdueAll.length>0&&(
-              <div style={{margin:"8px 22px 0",background:"#E07A5F15",border:"1px solid #E07A5F44",borderRadius:14,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:15,animation:"overduePulse 2s ease infinite",flexShrink:0}}>⚠️</span>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:12,fontWeight:600,color:"#E07A5F"}}>{overdueAll.length} overdue from yesterday</div>
-                </div>
-                <button onClick={moveOverdueToToday} style={{background:"#E07A5F",border:"none",borderRadius:8,padding:"6px 10px",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>Move all →</button>
-              </div>
-            )}
+
 
             {/* Progress Ring */}
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"18px 0 12px"}}>
@@ -740,6 +777,7 @@ export default function App(){
           <div style={{flex:1,overflowY:"auto",overflowX:"hidden",padding:"52px 22px 80px"}}>
             <div style={{fontSize:11,color:th.textDim,letterSpacing:1.5,textTransform:"uppercase",fontFamily:"'Space Mono',monospace",marginBottom:4}}>All Tasks</div>
             <div style={{fontSize:21,fontWeight:600,marginBottom:16,letterSpacing:-0.3}}>Everything</div>
+
             {/* Search bar */}
             <div style={{position:"relative",marginBottom:20}}>
               <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:th.textDim,pointerEvents:"none"}}>🔍</span>
@@ -748,48 +786,79 @@ export default function App(){
                 onFocus={e=>e.target.style.borderColor=accent} onBlur={e=>e.target.style.borderColor=th.border2}/>
               {listSearch&&<button onClick={()=>setListSearch("")} style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:th.textDim,fontSize:14,cursor:"pointer",padding:"4px",lineHeight:1}}>✕</button>}
             </div>
-            {sortedDates.length===0&&!listSearch&&<div style={{textAlign:"center",color:th.textDim,marginTop:60,fontSize:14}}>No tasks yet — hit + to add one!</div>}
+
+            {/* ── Overdue section — always at top, visually distinct ── */}
+            {overdueAll.length>0&&!listSearch&&(
+              <div style={{marginBottom:28,background:"#E07A5F0D",border:"1px solid #E07A5F33",borderRadius:16,padding:"14px 14px 8px",borderLeft:"3px solid #E07A5F"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:15,animation:"overduePulse 2s ease infinite"}}>⚠️</span>
+                    <div>
+                      <div style={{fontSize:14,fontWeight:700,color:"#E07A5F"}}>{overdueAll.length} Overdue</div>
+                      <div style={{fontSize:11,color:"#E07A5F88",marginTop:1}}>These tasks were not completed</div>
+                    </div>
+                  </div>
+                  <button onClick={moveOverdueToToday}
+                    style={{background:"#E07A5F",border:"none",borderRadius:10,padding:"8px 14px",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",flexShrink:0}}>
+                    Move all to today →
+                  </button>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:0}}>
+                  {sortList(overdueAll,settings.sortBy).map(task=>(
+                    <TaskCard key={task.id} task={task} {...sharedCardProps} full overdue
+                      isSliding={justDone===task.id||justDeleted===task.id}/>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ── Upcoming & today tasks ── */}
+            {sortedDates.length===0&&!listSearch&&overdueAll.length===0&&<div style={{textAlign:"center",color:th.textDim,marginTop:60,fontSize:14}}>No tasks yet — hit + to add one!</div>}
             {(() => {
               const q=listSearch.toLowerCase().trim();
-              const filteredDates=q
+              // Exclude overdue dates from the main list (they're shown above)
+              const overdueDateSet=new Set(overdueAll.map(t=>t.date));
+              const filteredDates=(q
                 ? sortedDates.filter(date=>groupedByDate[date].some(t=>
                     t.title.toLowerCase().includes(q)||
                     (t.notes||"").toLowerCase().includes(q)||
                     getCat(t.category,categories).label.toLowerCase().includes(q)
                   ))
-                : sortedDates;
-              if(q&&filteredDates.length===0) return <div style={{textAlign:"center",color:th.textDim,marginTop:40,fontSize:14}}>No results for "{listSearch}"</div>;
+                : sortedDates
+              ).filter(date=>!overdueDateSet.has(date)||q); // hide overdue dates unless searching
+              if(q&&filteredDates.length===0&&overdueAll.length===0) return <div style={{textAlign:"center",color:th.textDim,marginTop:40,fontSize:14}}>No results for "{listSearch}"</div>;
               return filteredDates.map(date=>{
-              const dayTasks=groupedByDate[date];
-              const isOverdueGroup=date===yesterdayStr();
-              const inc=sortList(dayTasks.filter(t=>!t.done),settings.sortBy);
-              const done=dayTasks.filter(t=>t.done);
-              return(
-                <div key={date} style={{marginBottom:26}}>
-                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:600,color:date===todayStr()?accent:isOverdueGroup?"#E07A5F":th.text}}>
-                        {fmtDateLabel(date)}{isOverdueGroup?" ⚠️":""}
+                const dayTasks=groupedByDate[date];
+                const isToday=date===todayStr();
+                const q2=listSearch.toLowerCase().trim();
+                const inc=sortList(dayTasks.filter(t=>!t.done&&(!q2||t.title.toLowerCase().includes(q2)||(t.notes||"").toLowerCase().includes(q2)||getCat(t.category,categories).label.toLowerCase().includes(q2))),settings.sortBy);
+                const done=dayTasks.filter(t=>t.done&&(!q2||t.title.toLowerCase().includes(q2)||(t.notes||"").toLowerCase().includes(q2)||getCat(t.category,categories).label.toLowerCase().includes(q2)));
+                if(!inc.length&&!done.length) return null;
+                return(
+                  <div key={date} style={{marginBottom:26}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:600,color:isToday?accent:th.text}}>{fmtDateLabel(date)}</div>
+                        {!isToday&&<div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace",marginTop:1}}>{new Date(date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>}
                       </div>
-                      {date!==todayStr()&&<div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace",marginTop:1}}>{new Date(date).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>}
+                      <div style={{flex:1,height:1,background:th.border}}/>
+                      <div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace"}}>{done.length}/{dayTasks.length}</div>
                     </div>
-                    <div style={{flex:1,height:1,background:isOverdueGroup?"#E07A5F33":th.border}}/>
-                    <div style={{fontSize:11,color:th.textDim,fontFamily:"'Space Mono',monospace"}}>{done.length}/{dayTasks.length}</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:0}}>
+                      {inc.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full isSliding={justDone===task.id||justDeleted===task.id}/>)}
+                      {inc.length>0&&done.length>0&&(
+                        <div style={{display:"flex",alignItems:"center",gap:10,margin:"8px 0 5px"}}>
+                          <div style={{flex:1,height:1,background:`linear-gradient(to right,transparent,${th.border})`}}/>
+                          <span style={{fontSize:10,color:th.textMuted,display:"flex",alignItems:"center",gap:4}}><span style={{color:"#81B29A"}}>✓</span>{done.length} done</span>
+                          <div style={{flex:1,height:1,background:`linear-gradient(to left,transparent,${th.border})`}}/>
+                        </div>
+                      )}
+                      {done.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full isSliding={justDeleted===task.id}/>)}
+                    </div>
                   </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:0}}>
-                    {inc.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full overdue={isOverdueGroup} isSliding={justDone===task.id||justDeleted===task.id}/>)}
-                    {inc.length>0&&done.length>0&&(
-                      <div style={{display:"flex",alignItems:"center",gap:10,margin:"8px 0 5px"}}>
-                        <div style={{flex:1,height:1,background:`linear-gradient(to right,transparent,${th.border})`}}/>
-                        <span style={{fontSize:10,color:th.textMuted,display:"flex",alignItems:"center",gap:4}}><span style={{color:"#81B29A"}}>✓</span>{done.length} done</span>
-                        <div style={{flex:1,height:1,background:`linear-gradient(to left,transparent,${th.border})`}}/>
-                      </div>
-                    )}
-                    {done.map(task=><TaskCard key={task.id} task={task} {...sharedCardProps} full isSliding={justDeleted===task.id}/>)}
-                  </div>
-                </div>
-              );
-            })})()}
+                );
+              });
+            })()}
           </div>
         </PageTransition>
       )}
@@ -804,8 +873,14 @@ export default function App(){
       {/* ══ Bottom Nav ══ */}
       <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:th.navBg,borderTop:`1px solid ${th.border}`,display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",alignItems:"end",padding:"0 0 20px",zIndex:50,backdropFilter:"blur(14px)",minHeight:64}}>
         {[{id:"home",icon:"⌂",label:"Home"},{id:"list",icon:"≡",label:"List"}].map(t=>(
-          <button key={t.id} className={`tab-btn ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)} style={{paddingTop:10}}>
-            <span className="tab-icon">{t.icon}</span><span>{t.label}</span>
+          <button key={t.id} className={`tab-btn ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)} style={{paddingTop:10,position:"relative"}}>
+            <span className="tab-icon">{t.icon}</span>
+            <span>{t.label}</span>
+            {t.id==="list"&&overdueAll.length>0&&(
+              <span style={{position:"absolute",top:6,right:"calc(50% - 14px)",background:"#E07A5F",color:"#fff",borderRadius:10,fontSize:9,fontWeight:700,padding:"1px 5px",lineHeight:"14px",minWidth:14,textAlign:"center"}}>
+                {overdueAll.length}
+              </span>
+            )}
           </button>
         ))}
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"flex-end",paddingBottom:4}}>
@@ -821,13 +896,13 @@ export default function App(){
 
       {/* ══ Sheet ══ */}
       {sheetOpen&&(
-        <Sheet todayInc={sortList(todayInc,settings.sortBy)} todayDone={todayDone} tomorrowTasks={sortList(tomorrowAll,settings.sortBy)} overdueAll={overdueAll}
+        <Sheet todayInc={sortList(todayInc,settings.sortBy)} todayDone={todayDone} tomorrowTasks={sortList(tomorrowAll,settings.sortBy)}
           categories={categories} accent={accent} th={th} justDone={justDone} justDeleted={justDeleted}
           expandedNote={expandedNote} onToggleNote={id=>setExpandedNote(n=>n===id?null:id)}
           onToggle={toggleDone} onToggleSubtask={toggleSubtask}
           onStart={t=>{ setSheetOpen(false); setTimerTask(t); }}
           onMenu={(t,e)=>{ e.stopPropagation(); setSheetOpen(false); haptic("light"); setActionMenu(t); }}
-          onClose={()=>setSheetOpen(false)} onMoveAllOverdue={moveOverdueToToday}
+          onClose={()=>setSheetOpen(false)}
           doneTodayCount={todayDone.length} totalTodayCount={todayAll.length}/>
       )}
 
@@ -912,6 +987,29 @@ export default function App(){
         onAddTestRecur={()=>{ setTasks(prev=>[...prev,{id:Date.now(),title:"Daily test task",category:"health",priority:"medium",minutes:20,workTime:"",dueTime:"",notes:"Dev test recurring",done:false,date:todayStr(),createdAt:Date.now(),recur:"daily",subtasks:[],manualOrder:prev.length,actualMinutes:0,recurStreak:0}]); setShowDevMenu(false); }}
         onSolidifyRecur={()=>{ triggerRecur(); setShowDevMenu(false); }}
       />}
+
+      {/* ══ Undo Delete Toast ══ */}
+      {undoDelete&&(
+        <div style={{
+          position:"fixed",bottom:90,left:"50%",transform:"translateX(-50%)",
+          zIndex:600,display:"flex",alignItems:"center",gap:12,
+          background:th.surface,border:`1px solid ${th.border2}`,
+          borderRadius:16,padding:"12px 16px",
+          boxShadow:"0 8px 32px rgba(0,0,0,0.4)",
+          animation:"slideUp 0.3s cubic-bezier(0.34,1.08,0.64,1)",
+          maxWidth:"calc(100vw - 44px)",
+          fontFamily:"'DM Sans',sans-serif",
+        }}>
+          <span style={{fontSize:16}}>🗑️</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>"{ undoDelete.task.title}" deleted</div>
+          </div>
+          <button onClick={undoDeleteTask}
+            style={{background:accent+"22",border:`1px solid ${accent}44`,borderRadius:10,padding:"7px 14px",color:accent,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+            Undo
+          </button>
+        </div>
+      )}
 
       {/* ══ Onboarding ══ */}
       {showOnboarding&&<Onboarding accent={accent} th={th} onDone={()=>{ try{localStorage.setItem('tf_onboarding_seen','1');}catch(e){} setShowOnboarding(false); }}/>}
@@ -1001,9 +1099,8 @@ function SortMenu({sortBy,hiddenSorts,categories,accent,th,onSelect,onToggleHide
 }
 
 // ─── Sheet — swipe up to open, swipe down to dismiss, scroll inside ───────────
-function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th,justDone,justDeleted,expandedNote,onToggleNote,onToggle,onToggleSubtask,onStart,onMenu,onClose,onMoveAllOverdue,doneTodayCount,totalTodayCount}){
+function Sheet({todayInc,todayDone,tomorrowTasks,categories,accent,th,justDone,justDeleted,expandedNote,onToggleNote,onToggle,onToggleSubtask,onStart,onMenu,onClose,doneTodayCount,totalTodayCount}){
   const[showDone,setShowDone]=useState(false);
-  const[showOverdue,setShowOverdue]=useState(true);
   const[closing,setClosing]=useState(false);
   const startY=useRef(null);
   const startScrollY=useRef(null);
@@ -1042,20 +1139,7 @@ function Sheet({todayInc,todayDone,tomorrowTasks,overdueAll,categories,accent,th
           </div>
         </div>
 
-        {/* Overdue */}
-        {overdueAll.length>0&&(
-          <div style={{marginBottom:16}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <button onClick={()=>setShowOverdue(p=>!p)} style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"none",cursor:"pointer",padding:0}}>
-                <span style={{fontSize:13,color:"#E07A5F",fontWeight:600}}>⚠️ {overdueAll.length} Overdue</span>
-                <span style={{fontSize:10,color:"#E07A5F55"}}>{showOverdue?"▾":"▸"}</span>
-              </button>
-              <div style={{flex:1,height:1,background:"#E07A5F33"}}/>
-              <button onClick={onMoveAllOverdue} style={{background:"#E07A5F22",border:"1px solid #E07A5F44",borderRadius:8,padding:"5px 10px",color:"#E07A5F",fontSize:12,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",fontWeight:600}}>Move all →</button>
-            </div>
-            {showOverdue&&overdueAll.map(task=><TaskCard key={task.id} task={task} {...props} full overdue isSliding={justDeleted===task.id}/>)}
-          </div>
-        )}
+
 
         {todayInc.length===0&&todayDone.length===0&&<div style={{textAlign:"center",color:th.textDim,padding:"28px 0",fontSize:14}}>Nothing scheduled today!</div>}
         {todayInc.length===0&&todayDone.length>0&&<div style={{textAlign:"center",color:"#81B29A",padding:"12px 0 18px",fontSize:13,fontWeight:500}}>All today's tasks complete! 🎉</div>}
