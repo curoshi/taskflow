@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 
+
 // --- Constants ----------------------------------------------------------------
 const DEFAULT_CATEGORIES = [
   { id:"work",     label:"Work",     color:"#E07A5F" },
@@ -49,19 +50,63 @@ const AUDIO_OPTIONS = [
 const SWATCH_COLORS = ["#E07A5F","#81B29A","#F2CC8F","#7B9EC9","#C9A7EB","#F4A261","#E76F51","#2A9D8F","#E9C46A","#264653","#A8DADC","#E63946","#457B9D","#6A4C93"];
 const ACCENT_OPTS   = ["#E07A5F","#81B29A","#7B9EC9","#C9A7EB","#F4A261","#E9C46A","#2A9D8F","#E63946"];
 
-// --- Themes -------------------------------------------------------------------
+// ─── Themes ───────────────────────────────────────────────────────────────────
 const THEMES = {
   dark: {
+    label:"Dark", icon:"🌙", dark:true,
     bg:"#0F0F14", surface:"#1A1A22", surface2:"#141418",
     border:"#1E1E28", border2:"#252530",
     text:"#F0EDE8", textMuted:"#555", textDim:"#444",
     navBg:"#0A0A0Ecc",
   },
   light: {
+    label:"Light", icon:"☀️", dark:false,
     bg:"#F5F3EF", surface:"#FFFFFF", surface2:"#F0EDE8",
     border:"#E8E4DC", border2:"#DDD8CE",
     text:"#1A1A22", textMuted:"#888", textDim:"#AAA",
     navBg:"#F5F3EFee",
+  },
+  midnight: {
+    label:"Midnight", icon:"🌌", dark:true,
+    bg:"#070B14", surface:"#0F1626", surface2:"#0A1020",
+    border:"#1A2540", border2:"#1E2D50",
+    text:"#E8EEFF", textMuted:"#3A4A6A", textDim:"#2E3D5A",
+    navBg:"#070B14cc",
+  },
+  forest: {
+    label:"Forest", icon:"🌲", dark:true,
+    bg:"#0A120D", surface:"#131F16", surface2:"#0E1910",
+    border:"#1A2E1E", border2:"#1E3824",
+    text:"#E0EDDF", textMuted:"#3A5A3F", textDim:"#2E4A32",
+    navBg:"#0A120Dcc",
+  },
+  dusk: {
+    label:"Dusk", icon:"🌇", dark:true,
+    bg:"#120A14", surface:"#1F1222", surface2:"#190E1C",
+    border:"#2E1A33", border2:"#3A2040",
+    text:"#EDE0F0", textMuted:"#5A3A63", textDim:"#4A2E52",
+    navBg:"#120A14cc",
+  },
+  sand: {
+    label:"Sand", icon:"🏜️", dark:false,
+    bg:"#F7F0E6", surface:"#FFF8EE", surface2:"#F0E8D8",
+    border:"#E8D8C0", border2:"#DDC9A8",
+    text:"#2A1F0F", textMuted:"#9A7A55", textDim:"#C0A070",
+    navBg:"#F7F0E6ee",
+  },
+  ocean: {
+    label:"Ocean", icon:"🌊", dark:true,
+    bg:"#070E18", surface:"#0D1B2E", surface2:"#091525",
+    border:"#122540", border2:"#163050",
+    text:"#D8EEFF", textMuted:"#2A4A6A", textDim:"#1E3A55",
+    navBg:"#070E18cc",
+  },
+  rose: {
+    label:"Rose", icon:"🌸", dark:false,
+    bg:"#FDF0F3", surface:"#FFFFFF", surface2:"#FAE8ED",
+    border:"#F0D0D8", border2:"#E8BEC8",
+    text:"#2A1018", textMuted:"#9A6070", textDim:"#C09AA8",
+    navBg:"#FDF0F3ee",
   },
 };
 
@@ -135,11 +180,11 @@ function buildSortOptions(categories,hiddenSorts=[]){
   return [...base,...cats];
 }
 
-// --- Haptics (graceful - works on Android, silent on iOS/desktop) -------------
+// ─── Haptics (graceful — works on Android, silent on iOS/desktop) ─────────────
 function haptic(type="light"){
   try{
     if(!("vibrate" in navigator)) return;
-    if(type==="light")   navigator.vibrate(10);
+    if(type==="light")        navigator.vibrate(10);
     else if(type==="medium")  navigator.vibrate(25);
     else if(type==="heavy")   navigator.vibrate(60);
     else if(type==="success") navigator.vibrate([10,40,10]);
@@ -176,7 +221,7 @@ function playTimerSound(type){
   }catch(e){}
 }
 
-// --- Notifications -------------------------------------------------------------
+// ─── Notifications ─────────────────────────────────────────────────────────────
 async function requestNotificationPermission(){
   if(!("Notification" in window)) return false;
   if(Notification.permission==="granted") return true;
@@ -332,7 +377,8 @@ export default function App(){
           if(t.date===today)   return true;
           return false;
         });
-      const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
+      // existing = all source IDs that already have a clone anywhere in the future
+      const existing=new Set(next.filter(t=>t.recurSourceId&&new Date(t.date)>=new Date(today)).map(t=>t.recurSourceId));
       const toAdd=[];
       next.forEach(t=>{
         if(!t.recur||t.recur==="none"||t.date===today||existing.has(t.id)) return;
@@ -369,8 +415,8 @@ export default function App(){
           if(t.date===today)   return true;   // keep today's clone
           return false;                       // remove all old clones (done or not)
         });
-      // Generate today's clone if one doesn't exist yet
-      const existing=new Set(next.filter(t=>t.date===today).map(t=>t.recurSourceId||t.id));
+      // Generate today's clone — skip if source already has a future clone anywhere
+      const existing=new Set(next.filter(t=>t.recurSourceId&&new Date(t.date)>=new Date(today)).map(t=>t.recurSourceId));
       const toAdd=[];
       next.forEach(t=>{
         if(!t.recur||t.recur==="none"||t.date===today||existing.has(t.id)) return;
@@ -594,14 +640,21 @@ export default function App(){
         // A copy already exists today -- just delete the overdue one
         return prev.filter(x=>x.id!==id);
       }
-      // Remove old, add fresh today copy
-      return [...prev.filter(x=>x.id!==id),{...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}];
+      // Remove old, add fresh today copy — strip recurSourceId so it becomes a plain task
+      const {recurSourceId,...rest}=t;
+      return [...prev.filter(x=>x.id!==id),{...rest,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,recur:"none",createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}];
     });
     setActionMenu(null);
   }
   function postponeTask(id){
     haptic("medium");
-    setTasks(prev=>prev.map(t=>t.id===id?{...t,date:tomorrowStr()}:t));
+    setTasks(prev=>prev.map(t=>{
+      if(t.id!==id) return t;
+      // Strip recurSourceId so triggerRecur doesn't treat this as a clone
+      // (prevents duplicate generation when tomorrow arrives)
+      const {recurSourceId,...rest}=t;
+      return {...rest,date:tomorrowStr(),recur:"none"};
+    }));
     setActionMenu(null);
   }
   function moveOverdueToToday(){
@@ -610,12 +663,13 @@ export default function App(){
     setTasks(prev=>{
       const todayTaskTitles=new Set(prev.filter(t=>t.date===today).map(t=>t.title.trim().toLowerCase()));
       const overdue=prev.filter(t=>!t.done&&new Date(t.date)<new Date(today)&&!(t.recur&&t.recur!=="none"&&!t.recurSourceId));
-      // Remove all overdue tasks
       let next=prev.filter(t=>!overdue.find(o=>o.id===t.id));
-      // Add fresh today copies only if no task with same title already exists today
       const toAdd=overdue
         .filter(t=>!todayTaskTitles.has(t.title.trim().toLowerCase()))
-        .map(t=>({...t,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}));
+        .map(t=>{
+          const {recurSourceId,...rest}=t;
+          return {...rest,id:Date.now()+Math.random(),date:today,done:false,actualMinutes:0,recur:"none",createdAt:Date.now(),subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))};
+        });
       return [...next,...toAdd];
     });
   }
@@ -627,6 +681,7 @@ export default function App(){
   function quickAddTask(){
     if(!quickAdd.trim()) return;
     haptic("medium");
+    // Quick add always creates non-recurring tasks (use form for recurring)
     setTasks(prev=>[...prev,{id:Date.now(),title:quickAdd.trim(),category:categories[0]?.id||"work",priority:"medium",minutes:settings.defaultMinutes,workTime:"",dueTime:"",notes:"",done:false,date:todayStr(),createdAt:Date.now(),recur:"none",subtasks:[],manualOrder:prev.length,actualMinutes:0}]);
     setQuickAdd("");
   }
@@ -973,8 +1028,8 @@ export default function App(){
             </div>
             {[
               {icon:"✏️",label:"Edit Task",      sub:"Modify all details",       action:()=>{ setTaskForm({mode:"edit",task:{...actionMenu}}); setActionMenu(null); }, color:th.text},
-              ...(actionMenu.date!==todayStr()&&!actionMenu.recurSourceId?[{icon:"📥",label:"Move to Today", sub:"Pull into today's list",   action:()=>moveToToday(actionMenu.id), color:accent}]:[]),
-              ...(actionMenu.date===todayStr()&&!actionMenu.recurSourceId?[{icon:"📅",label:"Postpone",      sub:"Move to tomorrow",         action:()=>postponeTask(actionMenu.id), color:"#7B9EC9"}]:[]),
+              ...(actionMenu.date!==todayStr()&&!actionMenu.recurSourceId?[{icon:"📥",label:"Move to Today", sub:"Pull into today's list", action:()=>moveToToday(actionMenu.id),  color:accent}]:[]),
+              ...(actionMenu.date===todayStr()?                             [{icon:"📅",label:"Postpone",      sub:"Move to tomorrow",       action:()=>postponeTask(actionMenu.id), color:"#7B9EC9"}]:[]),
               {icon:"📋",label:"Save as Template",sub:"Reuse this task config",   action:()=>{ saveTemplate(actionMenu); setActionMenu(null); },                      color:"#81B29A"},
               {icon:"🗑️",label:"Delete Task",    sub:"This can't be undone",     action:()=>setDeleteConfirm(actionMenu.id),                                         color:"#E07A5F"},
             ].map(item=>(
@@ -1295,13 +1350,16 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAp
             <div style={{display:"flex",alignItems:"center",gap:5}}>
               <div style={{fontSize:compact?13:14,fontWeight:500,textDecoration:task.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:task.done?th.textMuted:th.text,flex:1}}>{task.title}</div>
               {task.recur&&task.recur!=="none"&&(()=>{
-                const streak=(task.recurStreak||0);
+                // For clones, look up source task's streak; for source tasks use own streak
+                const srcTask=task.recurSourceId
+                  ? (tasks||[]).find(x=>x.id===task.recurSourceId)||task
+                  : task;
+                const streak=(srcTask.recurStreak||0);
                 const pendingToday=task.done&&task.date===todayStr();
-                const displayStreak=streak;
                 const color=streak>=10?"#F2CC8F":streak>=5?accent:th.textMuted;
                 return(
                   <span style={{fontSize:9,color:pendingToday?"#81B29A":color,background:pendingToday?"#81B29A22":streak>=5?accent+"18":th.surface2,borderRadius:3,padding:"1px 5px",flexShrink:0,fontWeight:pendingToday||streak>=5?700:400,display:"flex",alignItems:"center",gap:2}}>
-                    ↻{pendingToday?` ${displayStreak}x ✓`:displayStreak>0?` ${displayStreak}x`:""}
+                    ↻{pendingToday?` ${streak}x ✓`:streak>0?` ${streak}x`:""}
                   </span>
                 );
               })()}
@@ -1601,13 +1659,32 @@ function SettingsPage({settings,setSettings,analytics,categories,tasks,accent,th
 
         {section==="display"&&<>
           <div style={{fontSize:11,color:th.textDim,letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Space Mono',monospace",marginBottom:10}}>Theme</div>
-          <div style={{display:"flex",gap:10,marginBottom:20}}>
-            {[{id:"dark",label:"Dark",icon:"🌙"},{id:"light",label:"Light",icon:"☀️"}].map(t=>(
-              <button key={t.id} onClick={()=>setSettings(p=>({...p,theme:t.id}))}
-                style={{flex:1,background:(settings.theme||"dark")===t.id?accent+"22":th.surface,border:`1.5px solid ${(settings.theme||"dark")===t.id?accent:th.border}`,borderRadius:14,padding:"14px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"'DM Sans',sans-serif",color:(settings.theme||"dark")===t.id?accent:th.textMuted,fontWeight:(settings.theme||"dark")===t.id?600:400,fontSize:14}}>
-                <span style={{fontSize:18}}>{t.icon}</span>{t.label}
-              </button>
-            ))}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:20}}>
+            {Object.entries(THEMES).map(([id,t])=>{
+              const active=(settings.theme||"dark")===id;
+              return(
+                <button key={id} onClick={()=>setSettings(p=>({...p,theme:id}))}
+                  style={{
+                    background:active?accent+"22":t.surface,
+                    border:`1.5px solid ${active?accent:t.border2}`,
+                    borderRadius:14,padding:"12px 14px",cursor:"pointer",
+                    display:"flex",alignItems:"center",gap:10,
+                    fontFamily:"'DM Sans',sans-serif",
+                    transition:"all 0.15s",
+                    position:"relative",overflow:"hidden",
+                  }}>
+                  {/* Mini preview swatch */}
+                  <div style={{width:32,height:32,borderRadius:8,background:t.bg,border:`2px solid ${t.border2}`,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>
+                    {t.icon}
+                  </div>
+                  <div style={{textAlign:"left"}}>
+                    <div style={{fontSize:13,fontWeight:active?600:500,color:active?accent:th.text}}>{t.label}</div>
+                    <div style={{fontSize:10,color:th.textMuted,marginTop:1}}>{t.dark===false?"Light":"Dark"}</div>
+                  </div>
+                  {active&&<span style={{position:"absolute",top:8,right:10,fontSize:10,color:accent}}>✓</span>}
+                </button>
+              );
+            })}
           </div>
           <div style={{fontSize:11,color:th.textDim,letterSpacing:1.2,textTransform:"uppercase",fontFamily:"'Space Mono',monospace",marginBottom:10}}>Accent Color</div>
           <div style={{background:th.surface,borderRadius:14,padding:"18px",marginBottom:20}}>
@@ -1736,7 +1813,7 @@ function TaskFormPage({mode,initialData,categories,setCategories,settings,onSave
   function removeSubtask(id){ setForm(f=>({...f,subtasks:(f.subtasks||[]).filter(s=>s.id!==id)})); }
 
   const estFinish = calcEstFinish(form.workTime,form.minutes);
-  const cs = settings.theme==="light"?"light":"dark"; // colorScheme for inputs
+  const cs = th.dark===false?"light":"dark"; // colorScheme for inputs — based on theme brightness
 
   // Duration label: show hours format above 60 min
   const durLabel = fmtDuration(form.minutes);
