@@ -596,7 +596,7 @@ export default function App(){
       const newTasks=[src];
       // If recurring, immediately create a visible clone for today (source stays hidden)
       if(f.recur&&f.recur!=="none"&&shouldRecurToday(f,todayStr())){
-        newTasks.push({...src,id:srcId+0.1,date:todayStr(),done:false,actualMinutes:0,
+        newTasks.push({...src,id:src.id + "-" + Date.now(),date:todayStr(),done:false,actualMinutes:0,
           recurSourceId:srcId,createdAt:Date.now(),
           subtasks:(f.subtasks||[]).map(s=>({...s,done:false}))});
       }
@@ -606,21 +606,28 @@ export default function App(){
     }
     setTaskForm(null);
   }
-  function deleteTask(id){
+ function deleteTask(id){
     haptic("error");
     const task=tasks.find(t=>t.id===id);
     if(!task) return;
-    setDeleteConfirm(null); setActionMenu(null);
+    
+    setDeleteConfirm(null);
+    setActionMenu(null);
     setJustDeleted(id);
-    setExpandedNote(n=>n===id?null:n); // clear expanded note if it was this task
-    // Cancel any existing undo timer
-    if(undoDelete?.timerId) clearTimeout(undoDelete.timerId);
-    // Slide-out animation plays, then actually remove after 4s (undo window)
+    setExpandedNote(n=>n===id?null:n);    
     setTimeout(()=>setJustDeleted(null),420);
+    
     const timerId=setTimeout(()=>{
-      setTasks(prev=>prev.filter(t=>t.id!==id));
+      setTasks(prev => {
+        // Identify the root source ID (whether you clicked the clone or the source)
+        const targetId = task.recurSourceId || task.id;
+        
+        // Filter out the source itself AND any clones associated with it
+        return prev.filter(t => t.id !== targetId && t.recurSourceId !== targetId);
+      });
       setUndoDelete(null);
     },4000);
+    
     setUndoDelete({task,timerId});
   }
   function undoDeleteTask(){
