@@ -1350,11 +1350,7 @@ function TaskCard({task,categories,accent,th,compact,full,overdue,isSliding,isAp
             <div style={{display:"flex",alignItems:"center",gap:5}}>
               <div style={{fontSize:compact?13:14,fontWeight:500,textDecoration:task.done?"line-through":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",color:task.done?th.textMuted:th.text,flex:1}}>{task.title}</div>
               {task.recur&&task.recur!=="none"&&(()=>{
-                // For clones, look up source task's streak; for source tasks use own streak
-                const srcTask=task.recurSourceId
-                  ? (tasks||[]).find(x=>x.id===task.recurSourceId)||task
-                  : task;
-                const streak=(srcTask.recurStreak||0);
+                const streak=(task.recurStreak||0);
                 const pendingToday=task.done&&task.date===todayStr();
                 const color=streak>=10?"#F2CC8F":streak>=5?accent:th.textMuted;
                 return(
